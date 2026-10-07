@@ -231,3 +231,16 @@ class BatchResult(BaseModel):
 
 class BatchExecOut(BaseModel):
     results: list[BatchResult]
+
+
+# ---------- 凭证 ----------
+class CredentialIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    type: str = Field(default="password", pattern="^(password|key)$")
+    secret: str = Field(min_length=1)
+
+
+class CredentialOut(BaseModel):
+    id: int
+    name: str
+    type: str

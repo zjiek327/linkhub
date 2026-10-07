@@ -23,6 +23,18 @@ log = logging.getLogger("linkhub.ws")
 router = APIRouter()
 
 
+async def _ws_user(ws: WebSocket):
+    """WS 鉴权：query token / cookie。返回用户名，失败抛 4401 关闭。"""
+    from ..auth import decode_token
+    token = ws.query_params.get("token") or ws.cookies.get("linkhub_token", "")
+    if not token:
+        return None
+    try:
+        return decode_token(token).get("name", "?")
+    except Exception:
+        return None
+
+
 def _parse_control(data: bytes | str) -> dict | None:
     """文本帧且为 {"lh": ...} JSON → 控制消息，否则 None（终端数据）。"""
     if isinstance(data, bytes):
@@ -105,6 +117,11 @@ async def _pipe_session(ws: WebSocket, session_id: int) -> None:
 @router.websocket("/ws/terminal/{session_id}")
 async def terminal(ws: WebSocket, session_id: int, node: str | None = None):
     """xterm.js ↔ 会话。node 参数非本机时为集群中继模式。"""
+    user = await _ws_user(ws)
+    if user is None:
+        await ws.accept()
+        await ws.close(code=4401, reason="未登录")
+        return
     if node and state.enabled and node != state.self_id:
         await _relay_terminal(ws, session_id, node)
         return
@@ -198,6 +215,10 @@ async def cluster_events(ws: WebSocket):
 @router.websocket("/ws/events")
 async def events(ws: WebSocket):
     """全局事件：session_status / node_status 等，驱动前端徽标。"""
+    if (await _ws_user(ws)) is None:
+        await ws.accept()
+        await ws.close(code=4401, reason="未登录")
+        return
     await ws.accept()
     q = bus.subscribe()
     try:

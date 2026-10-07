@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import require_operator, require_viewer
 from ..cluster.state import self_node_id, state
 from ..cluster.sync import build_device_entry
 from ..database import get_db
@@ -33,7 +34,7 @@ async def list_groups(db: AsyncSession = Depends(get_db)):
     return (await db.execute(select(DeviceGroup).order_by(DeviceGroup.id))).scalars().all()
 
 
-@router.post("/groups", response_model=GroupOut, status_code=201)
+@router.post("/groups", response_model=GroupOut, status_code=201, dependencies=[Depends(require_operator)])
 async def create_group(body: GroupIn, db: AsyncSession = Depends(get_db)):
     row = DeviceGroup(**body.model_dump())
     db.add(row)
@@ -42,7 +43,7 @@ async def create_group(body: GroupIn, db: AsyncSession = Depends(get_db)):
     return row
 
 
-@router.delete("/groups/{group_id}", status_code=204)
+@router.delete("/groups/{group_id}", status_code=204, dependencies=[Depends(require_operator)])
 async def delete_group(group_id: int, db: AsyncSession = Depends(get_db)):
     row = await db.get(DeviceGroup, group_id)
     if row is None:
@@ -55,7 +56,7 @@ async def delete_group(group_id: int, db: AsyncSession = Depends(get_db)):
 
 
 # ---------- 设备 ----------
-@router.get("/devices", response_model=DeviceListOut)
+@router.get("/devices", response_model=DeviceListOut, dependencies=[Depends(require_viewer)])
 async def list_devices(
     group_id: int | None = None,
     tag: str | None = None,
@@ -108,7 +109,7 @@ async def list_devices(
     return DeviceListOut(total=total, items=items[(page - 1) * size: page * size])
 
 
-@router.post("/devices", response_model=DeviceOut, status_code=201)
+@router.post("/devices", response_model=DeviceOut, status_code=201, dependencies=[Depends(require_operator)])
 async def create_device(body: DeviceIn, db: AsyncSession = Depends(get_db)):
     row = Device(**body.model_dump(), node_id=self_node_id())
     db.add(row)
@@ -118,7 +119,7 @@ async def create_device(body: DeviceIn, db: AsyncSession = Depends(get_db)):
     return row
 
 
-@router.get("/devices/{device_id}", response_model=DeviceOut)
+@router.get("/devices/{device_id}", response_model=DeviceOut, dependencies=[Depends(require_viewer)])
 async def get_device(device_id: int, db: AsyncSession = Depends(get_db)):
     row = await db.get(Device, device_id)
     if row is None:
@@ -128,7 +129,7 @@ async def get_device(device_id: int, db: AsyncSession = Depends(get_db)):
     return out
 
 
-@router.put("/devices/{device_id}", response_model=DeviceOut)
+@router.put("/devices/{device_id}", response_model=DeviceOut, dependencies=[Depends(require_operator)])
 async def update_device(device_id: int, body: DeviceIn, db: AsyncSession = Depends(get_db)):
     row = await db.get(Device, device_id)
     if row is None:
@@ -141,14 +142,14 @@ async def update_device(device_id: int, body: DeviceIn, db: AsyncSession = Depen
     return row
 
 
-@router.delete("/devices/{device_id}", status_code=204)
+@router.delete("/devices/{device_id}", status_code=204, dependencies=[Depends(require_operator)])
 async def delete_device(device_id: int, db: AsyncSession = Depends(get_db)):
     from ..services.devices import delete_device_cascade
     if not await delete_device_cascade(db, device_id):
         raise HTTPException(404, "设备不存在")
 
 
-@router.post("/devices/from-template/{template_key}", response_model=DeviceOut, status_code=201)
+@router.post("/devices/from-template/{template_key}", response_model=DeviceOut, status_code=201, dependencies=[Depends(require_operator)])
 async def create_from_template(template_key: str, body: DeviceFromTemplateIn,
                                db: AsyncSession = Depends(get_db)):
     from ..services.devices import create_device_from_template

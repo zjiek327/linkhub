@@ -18,6 +18,11 @@ from app.main import create_app
 def client():
     app = create_app()
     with TestClient(app) as c:  # 进入 with 才执行 lifespan
+        # RBAC：登录默认管理员（lifespan 已创建 admin/admin）
+        r = c.post("/api/auth/login", json={"name": "admin", "password": "admin"})
+        assert r.status_code == 200, r.text
+        token = r.json()["token"]
+        c.headers.update({"Authorization": f"Bearer {token}"})
         yield c
 
 

@@ -2,9 +2,30 @@ import axios from 'axios'
 
 export const http = axios.create({ baseURL: '/api', timeout: 30000 })
 
+// 登录令牌：内存 + localStorage，请求头自动携带
+let token = localStorage.getItem('linkhub_token') ?? ''
+export function setToken(t: string) {
+  token = t
+  t ? localStorage.setItem('linkhub_token', t) : localStorage.removeItem('linkhub_token')
+}
+export function getToken() { return token }
+
+http.interceptors.request.use(cfg => {
+  if (token) cfg.headers.Authorization = `Bearer ${token}`
+  return cfg
+})
+// 401 统一跳登录
+http.interceptors.response.use(r => r, err => {
+  if (err.response?.status === 401 && !location.hash.includes('/login')) {
+    setToken('')
+    location.href = '/#/login'
+  }
+  return Promise.reject(err)
+})
+
 export function wsUrl(path: string): string {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${location.host}${path}`
+  return `${proto}://${location.host}${path}${token ? `${path.includes('?') ? '&' : '?'}token=${token}` : ''}`
 }
 
 // ---------- 类型 ----------
@@ -95,4 +116,29 @@ export const api = {
     http.post(`/cluster/proxy/${nodeId}/from-template/${key}`, body).then(r => r.data),
   batchExec: (targets: { node_id: string; device_id: number }[], command: string, wait_ms = 1500) =>
     http.post<{ results: BatchResult[] }>('/cluster/batch/exec', { targets, command, wait_ms }).then(r => r.data),
+
+  // 认证/用户/凭证/审计
+  login: (name: string, password: string) =>
+    http.post('/auth/login', { name, password }).then(r => r.data),
+  me: () => http.get<Me>('/auth/me').then(r => r.data),
+  users: () => http.get<UserItem[]>('/users').then(r => r.data),
+  createUser: (body: any) => http.post<UserItem>('/users', body).then(r => r.data),
+  updateUser: (id: number, body: any) => http.put<UserItem>(`/users/${id}`, body).then(r => r.data),
+  deleteUser: (id: number) => http.delete(`/users/${id}`),
+  credentials: () => http.get<CredentialItem[]>('/credentials').then(r => r.data),
+  createCredential: (body: any) => http.post<CredentialItem>('/credentials', body).then(r => r.data),
+  deleteCredential: (id: number) => http.delete(`/credentials/${id}`),
+  audit: () => http.get<any[]>('/audit').then(r => r.data),
+  bleScan: (timeout = 8) => http.get<{ address: string; name: string }[]>('/serial/ble/scan', { params: { timeout } }).then(r => r.data),
+
+  // 自动化
+  playbookRun: (body: any) => http.post('/playbook/run', body, { timeout: 120000 }).then(r => r.data),
+  tasks: () => http.get<any[]>('/tasks').then(r => r.data),
+  createTask: (body: any) => http.post<any>('/tasks', body).then(r => r.data),
+  updateTask: (id: number, body: any) => http.put<any>(`/tasks/${id}`, body).then(r => r.data),
+  deleteTask: (id: number) => http.delete(`/tasks/${id}`),
 }
+
+export interface Me { id: number; name: string; role: string; enabled: boolean }
+export interface UserItem { id: number; name: string; role: string; enabled: boolean }
+export interface CredentialItem { id: number; name: string; type: string }

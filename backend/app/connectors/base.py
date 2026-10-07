@@ -48,4 +48,8 @@ def list_kinds() -> list[dict[str, Any]]:
 
 
 # 导入即注册内置连接器
+from . import ble_connector as _ble  # noqa: E402,F401
+from . import mqtt_connector as _mqtt  # noqa: E402,F401
 from . import serial_connector as _serial  # noqa: E402,F401
+from . import ssh_connector as _ssh  # noqa: E402,F401
+from . import telnet_connector as _telnet  # noqa: E402,F401

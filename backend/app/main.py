@@ -24,6 +24,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     async with SessionLocal() as db:
         await sync_builtin_templates(db, settings.builtin_templates_dir)
+        from .auth import ensure_default_admin
+        await ensure_default_admin(db)
         # 会话存活于进程内存，重启后把历史未关闭会话标记关闭（防僵尸"在线"）
         from datetime import datetime, timezone
         from sqlalchemy import update
@@ -38,7 +40,10 @@ async def lifespan(app: FastAPI):
         start_background_tasks()
         await mdns.start()
         await beacon.start()
+    from .scheduler import start_scheduler, stop_scheduler
+    await start_scheduler()
     yield
+    await stop_scheduler()
     await beacon.stop()
     await mdns.stop()
     await state.stop()

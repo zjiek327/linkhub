@@ -146,3 +146,30 @@ class AuditLog(Base):
     target: Mapped[str] = mapped_column(String(256), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    role: Mapped[str] = mapped_column(String(16), default="viewer")  # admin/operator/viewer
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ScheduledTask(Base):
+    """P4 定时任务：周期对多设备执行命令。"""
+    __tablename__ = "scheduled_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    command: Mapped[str] = mapped_column(Text)
+    targets: Mapped[list] = mapped_column(JSON, default=list)   # [{node_id, device_id}]
+    interval_s: Mapped[int] = mapped_column(Integer, default=300)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    wait_ms: Mapped[int] = mapped_column(Integer, default=1500)
+    last_run: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    history: Mapped[list] = mapped_column(JSON, default=list)   # 最近 20 次结果
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

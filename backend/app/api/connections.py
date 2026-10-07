@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import require_operator, require_viewer
 from ..cluster import client as cluster_client
 from ..cluster.state import self_node_id, state
 from ..connectors import ConnectorError, list_kinds
@@ -32,7 +33,7 @@ async def list_connections(device_id: int, db: AsyncSession = Depends(get_db)):
     )).scalars().all()
 
 
-@router.post("/devices/{device_id}/connections", response_model=ConnectionOut, status_code=201)
+@router.post("/devices/{device_id}/connections", response_model=ConnectionOut, status_code=201, dependencies=[Depends(require_operator)])
 async def create_connection(device_id: int, body: ConnectionIn, db: AsyncSession = Depends(get_db)):
     if await db.get(Device, device_id) is None:
         raise HTTPException(404, "设备不存在")
@@ -48,7 +49,7 @@ async def create_connection(device_id: int, body: ConnectionIn, db: AsyncSession
     return row
 
 
-@router.put("/connections/{conn_id}", response_model=ConnectionOut)
+@router.put("/connections/{conn_id}", response_model=ConnectionOut, dependencies=[Depends(require_operator)])
 async def update_connection(conn_id: int, body: ConnectionIn, db: AsyncSession = Depends(get_db)):
     row = await db.get(ConnectionProfile, conn_id)
     if row is None:
@@ -63,7 +64,7 @@ async def update_connection(conn_id: int, body: ConnectionIn, db: AsyncSession =
     return row
 
 
-@router.delete("/connections/{conn_id}", status_code=204)
+@router.delete("/connections/{conn_id}", status_code=204, dependencies=[Depends(require_operator)])
 async def delete_connection(conn_id: int, db: AsyncSession = Depends(get_db)):
     row = await db.get(ConnectionProfile, conn_id)
     if row is None:
@@ -91,7 +92,7 @@ async def _publish(device_id: int) -> None:
             bus.publish("device_changed", entry)
 
 
-@router.post("/connections/{conn_id}/open", response_model=SessionOut, status_code=201)
+@router.post("/connections/{conn_id}/open", response_model=SessionOut, status_code=201, dependencies=[Depends(require_operator)])
 async def open_session(conn_id: int, db: AsyncSession = Depends(get_db)):
     profile = await db.get(ConnectionProfile, conn_id)
     if profile is None:

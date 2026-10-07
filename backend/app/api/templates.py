@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import require_admin, require_operator
 from ..database import get_db
 from ..models import Template
 from ..schemas import TemplateIn, TemplateOut
@@ -24,7 +25,7 @@ async def get_template(key: str, db: AsyncSession = Depends(get_db)):
     return row
 
 
-@router.post("", response_model=TemplateOut, status_code=201)
+@router.post("", response_model=TemplateOut, status_code=201, dependencies=[Depends(require_operator)])
 async def create_template(body: TemplateIn, db: AsyncSession = Depends(get_db)):
     exists = (await db.execute(select(Template).where(Template.key == body.key))).scalar_one_or_none()
     if exists:
@@ -36,7 +37,7 @@ async def create_template(body: TemplateIn, db: AsyncSession = Depends(get_db)):
     return row
 
 
-@router.delete("/{key}", status_code=204)
+@router.delete("/{key}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_template(key: str, db: AsyncSession = Depends(get_db)):
     row = (await db.execute(select(Template).where(Template.key == key))).scalar_one_or_none()
     if row is None:

@@ -2,10 +2,11 @@
 import logging
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from ..auth import require_admin, require_operator
 from ..batch_exec import batch_exec_local
 from ..cluster import client
 from ..cluster.state import state
@@ -55,7 +56,7 @@ async def cluster_info():
             "name": state.self_name, "address": state.address}
 
 
-@router.post("/join", response_model=NodeOut, status_code=201)
+@router.post("/join", response_model=NodeOut, status_code=201, dependencies=[Depends(require_admin)])
 async def join(body: JoinIn):
     """加入集群：向对方发起握手，登记为 peer，并 gossip 尝试加入其已知节点。"""
     _require_enabled()
@@ -115,7 +116,7 @@ async def _node_out(node_id: str) -> NodeOut:
     return NodeOut.model_validate(row)
 
 
-@router.post("/leave/{node_id}", status_code=204)
+@router.post("/leave/{node_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def leave(node_id: str):
     _require_enabled()
     _peer_or_404(node_id)
@@ -138,7 +139,7 @@ class _DismissBody(BaseModel):
     node_ids: list[str]
 
 
-@router.post("/dismiss", status_code=204)
+@router.post("/dismiss", status_code=204, dependencies=[Depends(require_admin)])
 async def dismiss(body: _DismissBody):
     """忽略发现的节点：移出待批准且不再因 beacon/mDNS 重新出现。"""
     for nid in body.node_ids:
@@ -158,7 +159,7 @@ async def proxy_device(node_id: str, device_id: int):
         raise HTTPException(503, f"无法连接归属节点: {exc}") from exc
 
 
-@router.post("/proxy/{node_id}/open", response_model=RemoteOpenOut, status_code=201)
+@router.post("/proxy/{node_id}/open", response_model=RemoteOpenOut, status_code=201, dependencies=[Depends(require_operator)])
 async def proxy_open(node_id: str, body: RemoteOpenIn):
     peer = _peer_or_404(node_id)
     if peer.status != "online":
@@ -179,7 +180,7 @@ async def proxy_close(node_id: str, session_id: int):
     return {"closed": True}
 
 
-@router.delete("/proxy/{node_id}/devices/{device_id}", status_code=204)
+@router.delete("/proxy/{node_id}/devices/{device_id}", status_code=204, dependencies=[Depends(require_operator)])
 async def proxy_delete_device(node_id: str, device_id: int):
     """剔除远程节点的设备（级联清理在归属节点完成）。"""
     peer = _peer_or_404(node_id)
@@ -197,7 +198,7 @@ class _ProxyFromTemplateIn(BaseModel):
     param_overrides: dict = {}
 
 
-@router.post("/proxy/{node_id}/from-template/{key}", status_code=201)
+@router.post("/proxy/{node_id}/from-template/{key}", status_code=201, dependencies=[Depends(require_operator)])
 async def proxy_from_template(node_id: str, key: str, body: _ProxyFromTemplateIn):
     """在远程节点上用模板创建设备（设备归属该节点）。"""
     peer = _peer_or_404(node_id)
@@ -210,7 +211,7 @@ async def proxy_from_template(node_id: str, key: str, body: _ProxyFromTemplateIn
 
 
 # ---------- 批量执行（C3） ----------
-@router.post("/batch/exec", response_model=BatchExecOut)
+@router.post("/batch/exec", response_model=BatchExecOut, dependencies=[Depends(require_operator)])
 async def batch_exec(body: BatchExecIn):
     """按归属节点分组：本机直接执行，远程节点 RPC 分发后合并。"""
     local_ids, by_peer = [], {}

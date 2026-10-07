@@ -17,6 +17,7 @@ from websockets.sync.client import connect as ws_connect
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT_A, PORT_B = 18101, 18102
 A, B = f"http://127.0.0.1:{PORT_A}", f"http://127.0.0.1:{PORT_B}"
+TOKEN_HDR = {"Authorization": "Bearer admin-token-placeholder"}  # 进程内登录后更新
 
 
 def _start_node(port: int, name: str, db_path: str) -> subprocess.Popen:
@@ -36,6 +37,11 @@ def _start_node(port: int, name: str, db_path: str) -> subprocess.Popen:
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _login(url: str) -> dict:
+    r = httpx.post(f"{url}/api/auth/login", json={"name": "admin", "password": "admin"})
+    return {"Authorization": f"Bearer {r.json()['token']}"}
+
+
 def _wait_health(url: str, timeout=20):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -45,6 +51,11 @@ def _wait_health(url: str, timeout=20):
         except httpx.HTTPError:
             time.sleep(0.2)
     raise RuntimeError(f"{url} 启动超时")
+
+
+AUTH_A: dict = {}
+AUTH_B: dict = {}
+AUTH_A_WS = ''
 
 
 class EchoPty:
@@ -78,6 +89,9 @@ def cluster(tmp_path_factory):
     pb = _start_node(PORT_B, "节点B", str(tmp / "b.db"))
     _wait_health(A)
     _wait_health(B)
+    AUTH_A.update(_login(A))
+    AUTH_B.update(_login(B))
+    globals()["AUTH_A_WS"] = _login(A)["Authorization"].removeprefix("Bearer ").strip()
     yield {"A": A, "B": B, "proc_b": pb}
     for p in (pa, pb):
         p.terminate()
@@ -107,25 +121,25 @@ def test_internal_requires_token(cluster):
 def test_join_and_federated_list(cluster):
     a_id, b_id = _node_id(A), _node_id(B)
     # B 加入 A
-    r = httpx.post(f"{B}/api/cluster/join", json={"address": A})
+    r = httpx.post(f"{B}/api/cluster/join", json={"address": A}, headers=AUTH_B)
     assert r.status_code == 201, r.text
     assert r.json()["node_id"] == a_id
 
     # 双方都应看到对方 online
     def both_online():
-        a_sees = {n["node_id"]: n for n in httpx.get(f"{A}/api/cluster/nodes").json()}
-        b_sees = {n["node_id"]: n for n in httpx.get(f"{B}/api/cluster/nodes").json()}
+        a_sees = {n["node_id"]: n for n in httpx.get(f"{A}/api/cluster/nodes", headers=AUTH_A).json()}
+        b_sees = {n["node_id"]: n for n in httpx.get(f"{B}/api/cluster/nodes", headers=AUTH_B).json()}
         return (a_sees.get(b_id, {}).get("status") == "online"
                 and b_sees.get(a_id, {}).get("status") == "online")
     _wait_until(both_online)
 
     # 在 B 上创建设备 → 应出现在 A 的联邦列表
-    r = httpx.post(f"{B}/api/devices", json={"name": "B机-树莓派", "tags": ["remote"]})
+    r = httpx.post(f"{B}/api/devices", json={"name": "B机-树莓派", "tags": ["remote"]}, headers=AUTH_B)
     assert r.status_code == 201
     dev_b = r.json()
 
     def found():
-        items = httpx.get(f"{A}/api/devices").json()["items"]
+        items = httpx.get(f"{A}/api/devices", headers=AUTH_A).json()["items"]
         return next((d for d in items if d["node_id"] == b_id and d["id"] == dev_b["id"]), None)
     remote = _wait_until(found)
     assert remote["name"] == "B机-树莓派"
@@ -134,25 +148,39 @@ def test_join_and_federated_list(cluster):
     cluster["dev_b"] = dev_b
 
 
+def _ensure_joined():
+    """测试顺序无关：确保 B 已加入 A（双方节点表互相可见）。"""
+    a_id = _node_id(A)
+    def joined():
+        nodes = {n["node_id"]: n for n in httpx.get(f"{A}/api/cluster/nodes", headers=AUTH_A).json()}
+        return a_id in nodes and nodes[a_id]["status"] == "online"
+    deadline = time.time() + 10
+    while time.time() < deadline and not joined():
+        httpx.post(f"{B}/api/cluster/join", json={"address": A}, headers=AUTH_B)
+        time.sleep(1.0)
+    assert joined(), "join 超时"
+
+
 def test_remote_terminal_relay(cluster):
     """从节点 A 打开节点 B 上设备的终端：A 做中继，pty 回显。"""
+    _ensure_joined()
     b_id = _node_id(B)
     echo = EchoPty()
     try:
-        dev = httpx.post(f"{B}/api/devices", json={"name": "B机-中继测试"}).json()
+        dev = httpx.post(f"{B}/api/devices", json={"name": "B机-中继测试"}, headers=AUTH_B).json()
         conn = httpx.post(f"{B}/api/devices/{dev['id']}/connections", json={
             "kind": "serial", "name": "UART",
             "params": {"port": echo.slave_name, "baudrate": 9600, "auto_reconnect": False},
-        }).json()
+        }, headers=AUTH_B).json()
 
         # 经 A 代理打开 B 的会话
-        r = httpx.post(f"{A}/api/cluster/proxy/{b_id}/open", json={"connection_id": conn["id"]})
+        r = httpx.post(f"{A}/api/cluster/proxy/{b_id}/open", json={"connection_id": conn["id"]}, headers=AUTH_A)
         assert r.status_code == 201, r.text
         sid = r.json()["session_id"]
         assert r.json()["node_id"] == b_id
 
         # 经 A 的中继 WS 收发（跳过角色控制帧）
-        with ws_connect(f"ws://127.0.0.1:{PORT_A}/ws/terminal/{sid}?node={b_id}") as ws:
+        with ws_connect(f"ws://127.0.0.1:{PORT_A}/ws/terminal/{sid}?node={b_id}&token={AUTH_A_WS}") as ws:
             ws.send(b"whoami\r")
             deadline = time.time() + 5
             data = b""
@@ -164,29 +192,30 @@ def test_remote_terminal_relay(cluster):
                 if b"ok:whoami" in data:
                     break
             assert b"ok:whoami" in data  # B 侧 pty 回显经中继回到浏览器
-        httpx.post(f"{A}/api/cluster/proxy/{b_id}/sessions/{sid}/close")
+        httpx.post(f"{A}/api/cluster/proxy/{b_id}/sessions/{sid}/close", headers=AUTH_A)
     finally:
         echo.close()
 
 
 def test_batch_exec_cross_node(cluster):
     """跨节点批量执行：A 一条命令同时下发本机与 B 的设备。"""
+    _ensure_joined()
     b_id = _node_id(B)
     echo_a, echo_b = EchoPty(), EchoPty()
     try:
-        dev_a = httpx.post(f"{A}/api/devices", json={"name": "A机-批量"}).json()
-        dev_b = httpx.post(f"{B}/api/devices", json={"name": "B机-批量"}).json()
-        for url, dev, echo in ((A, dev_a, echo_a), (B, dev_b, echo_b)):
+        dev_a = httpx.post(f"{A}/api/devices", json={"name": "A机-批量"}, headers=AUTH_A).json()
+        dev_b = httpx.post(f"{B}/api/devices", json={"name": "B机-批量"}, headers=AUTH_B).json()
+        for url, dev, echo, auth in ((A, dev_a, echo_a, AUTH_A), (B, dev_b, echo_b, AUTH_B)):
             httpx.post(f"{url}/api/devices/{dev['id']}/connections", json={
                 "kind": "serial", "name": "UART",
                 "params": {"port": echo.slave_name, "baudrate": 9600, "auto_reconnect": False},
-            })
+            }, headers=auth)
 
         r = httpx.post(f"{A}/api/cluster/batch/exec", json={
             "targets": [{"node_id": "local", "device_id": dev_a["id"]},
                         {"node_id": b_id, "device_id": dev_b["id"]}],
             "command": "uname -a", "wait_ms": 1000,
-        }, timeout=30)
+        }, headers=AUTH_A, timeout=30)
         assert r.status_code == 200, r.text
         results = {x["device_id"]: x for x in r.json()["results"]}
         assert results[dev_a["id"]]["ok"] and "ok:uname" in results[dev_a["id"]]["output"]
@@ -204,16 +233,16 @@ def test_node_offline_grays_devices(cluster):
     cluster["proc_b"].wait(timeout=5)
 
     def offline():
-        nodes = {n["node_id"]: n for n in httpx.get(f"{A}/api/cluster/nodes").json()}
+        nodes = {n["node_id"]: n for n in httpx.get(f"{A}/api/cluster/nodes", headers=AUTH_A).json()}
         return nodes.get(b_id, {}).get("status") == "offline"
     _wait_until(offline, timeout=10)
 
-    items = httpx.get(f"{A}/api/devices").json()["items"]
+    items = httpx.get(f"{A}/api/devices", headers=AUTH_A).json()["items"]
     remote = next(d for d in items if d["node_id"] == b_id)
     assert remote["node_online"] is False
 
     # 离线节点代理请求返回 503
-    r = httpx.post(f"{A}/api/cluster/proxy/{b_id}/open", json={"connection_id": 1})
+    r = httpx.post(f"{A}/api/cluster/proxy/{b_id}/open", json={"connection_id": 1}, headers=AUTH_A)
     assert r.status_code == 503
 
     # 重启 B（全新数据库 = 新身份）：A 应自动替换旧身份，同地址节点回到 online
@@ -222,7 +251,7 @@ def test_node_offline_grays_devices(cluster):
     _wait_health(B)
 
     def back_online():
-        nodes = httpx.get(f"{A}/api/cluster/nodes").json()
+        nodes = httpx.get(f"{A}/api/cluster/nodes", headers=AUTH_A).json()
         same_addr = [n for n in nodes if n["address"] == f"http://127.0.0.1:{PORT_B}"]
         # 旧身份已被替换，同地址只剩一个 online 的新身份
         return (len(same_addr) == 1 and same_addr[0]["status"] == "online"

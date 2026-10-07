@@ -58,3 +58,13 @@ async def test_serial(body: SerialTestIn):
     finally:
         if writer is not None:
             writer.close()
+
+
+@router.get("/ble/scan")
+async def ble_scan(timeout: float = 8.0):
+    """BLE 扫描发现（P3）。无蓝牙适配器的环境返回空列表。"""
+    from ..connectors.ble_connector import scan_ble
+    try:
+        return await scan_ble(min(timeout, 20))
+    except Exception as exc:
+        return [{"address": "", "name": f"扫描失败: {exc}"}]
