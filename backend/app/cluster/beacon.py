@@ -14,6 +14,27 @@ from .state import state
 log = logging.getLogger("linkhub.cluster.beacon")
 
 
+def _broadcast_addrs() -> list[str]:
+    """所有本地接口的定向广播地址 + 255.255.255.255。
+    多网卡机器上 255.255.255.255 只走默认路由接口，可能到不了目标网段。"""
+    addrs = {"255.255.255.255"}
+    try:
+        import fcntl
+        import struct
+        for _, ifname in socket.if_nameindex():
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                brd = fcntl.ioctl(s.fileno(), 0x8919,  # SIOCGIFBRDADDR
+                                  struct.pack("256s", ifname.encode()))[20:24]
+                s.close()
+                addrs.add(socket.inet_ntoa(brd))
+            except OSError:
+                continue
+    except ImportError:  # 非 Linux（Windows 无 fcntl）
+        pass
+    return sorted(addrs)
+
+
 class _Protocol(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr) -> None:
         try:
@@ -65,11 +86,14 @@ class UdpBeacon:
         loop = asyncio.get_running_loop()
         card = json.dumps({"v": 1, "node_id": state.self_id, "name": state.self_name,
                            "address": state.address}, ensure_ascii=False).encode()
+        targets = _broadcast_addrs()
+        log.info("beacon 广播目标: %s", targets)
         while True:
-            try:
-                await loop.sock_sendto(sock, card, ("255.255.255.255", port))
-            except OSError as exc:
-                log.debug("beacon 发送失败: %s", exc)
+            for target in targets:
+                try:
+                    await loop.sock_sendto(sock, card, (target, port))
+                except OSError as exc:
+                    log.debug("beacon 发送失败 %s: %s", target, exc)
             await asyncio.sleep(3)
 
     async def stop(self) -> None:
