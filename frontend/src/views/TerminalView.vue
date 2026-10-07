@@ -5,8 +5,14 @@
       <span class="title">会话 #{{ sessionId }}</span>
       <el-tag v-if="remoteNode" size="small" type="warning" effect="plain">经节点中继</el-tag>
       <StatusBadge :status="status" />
+      <el-tag :type="amWriter ? 'success' : 'info'" size="small" effect="dark">
+        {{ amWriter ? '✏️ 主控' : '👁 旁观' }}
+      </el-tag>
+      <el-tag v-if="viewers > 1" size="small" effect="plain">{{ viewers }} 人在看</el-tag>
       <span v-if="lastError" class="err">{{ lastError }}</span>
       <div style="flex:1" />
+      <el-button v-if="!amWriter" size="small" type="warning" @click="requestWrite">✋ 申请输入</el-button>
+      <el-button v-else size="small" plain @click="releaseWrite">✋ 释放控制</el-button>
       <el-tooltip content="会话活着则重连数据流；已断开则用同一连接配置秒开新会话" placement="bottom">
         <el-button size="small" type="primary" plain :loading="reconnecting" @click="reconnect">↻ 重连</el-button>
       </el-tooltip>
@@ -21,9 +27,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElButton, ElMessage, ElNotification } from 'element-plus'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -48,6 +54,16 @@ let stopWatch: (() => void) | null = null
 let sizeSynced = false  // 手动同步过尺寸后，resize 时持续跟随
 let sessionDead = false // 后端会话已终结（4404），重连需重开会话
 const encoder = new TextEncoder()
+
+// ---- 多人协作角色：先进为主控（可写），其余旁观（只读） ----
+const cid = (() => {
+  let v = sessionStorage.getItem('linkhub_cid')
+  if (!v) { v = crypto.randomUUID(); sessionStorage.setItem('linkhub_cid', v) }
+  return v
+})()
+const myName = '用户-' + cid.slice(0, 4)
+const amWriter = ref(true)
+const viewers = ref(1)
 
 const sessionId = computed(() => Number(route.params.sessionId))
 const remoteNode = computed(() => (route.query.node as string) || '')
@@ -94,14 +110,84 @@ function initTerm() {
   }
 }
 
+function sendCtrl(msg: Record<string, any>) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ lh: msg }))
+}
+
+function applyRole() {
+  if (term) term.options.disableStdin = !amWriter.value
+}
+
+function requestWrite() { sendCtrl({ type: 'request_write', name: myName }) }
+function releaseWrite() { sendCtrl({ type: 'release_write' }); ElMessage.info('已释放控制，其他人可申请输入') }
+
+function notifyInputRequest(from: string, name: string) {
+  const n = ElNotification({
+    title: '✋ 输入权限申请',
+    type: 'warning',
+    position: 'top-right',
+    duration: 0,  // 不自动消失，等主控决策；非模态不打断操作
+    message: h('div', [
+      h('p', { style: 'margin:0 0 8px' }, `${name || from} 申请输入权限`),
+      h('div', { style: 'display:flex;gap:8px' }, [
+        h(ElButton, { size: 'small', type: 'primary', onClick: () => { sendCtrl({ type: 'grant_write', to: from }); n.close() } }, () => '同意'),
+        h(ElButton, { size: 'small', onClick: () => { sendCtrl({ type: 'deny_write', to: from }); n.close() } }, () => '拒绝'),
+      ]),
+    ]),
+  })
+}
+
+function handleCtrl(msg: Record<string, any>) {
+  switch (msg.type) {
+    case 'role':  // 接入时的角色快照
+      amWriter.value = msg.writer === cid
+      applyRole()
+      break
+    case 'presence':
+      viewers.value = msg.viewers
+      break
+    case 'input_request':
+      if (amWriter.value) notifyInputRequest(msg.from, msg.name)
+      break
+    case 'role_change': {
+      const nowWriter = msg.writer === cid
+      if (nowWriter !== amWriter.value) {
+        amWriter.value = nowWriter
+        applyRole()
+        ElMessage[nowWriter ? 'success' : 'info'](nowWriter ? '你已获得输入权限' : `输入权限已移交给 ${msg.writer_name || '他人'}`)
+      }
+      break
+    }
+    case 'input_denied':
+      if (msg.to === cid) ElMessage.warning('主控拒绝了你的输入申请')
+      break
+    case 'input_blocked':
+      ElMessage.warning('旁观模式只读，点「✋ 申请输入」获取权限')
+      break
+    case 'writer_free':
+      if (!amWriter.value) ElMessage.info('主控已释放，点「✋ 申请输入」即可获得权限')
+      break
+  }
+}
+
 function connectWs() {
   ws?.close()
   sessionDead = false
-  const nodeQ = remoteNode.value ? `?node=${remoteNode.value}` : ''
-  ws = new WebSocket(wsUrl(`/ws/terminal/${sessionId.value}${nodeQ}`))
+  const nodeQ = remoteNode.value ? `&node=${remoteNode.value}` : ''
+  ws = new WebSocket(wsUrl(`/ws/terminal/${sessionId.value}?cid=${cid}&name=${myName}${nodeQ}`))
   ws.binaryType = 'arraybuffer'
   ws.onopen = () => { status.value = 'online'; term?.focus() }
-  ws.onmessage = ev => term?.write(new Uint8Array(ev.data as ArrayBuffer))
+  ws.onmessage = ev => {
+    if (typeof ev.data === 'string') {  // 文本帧：控制消息（或纯文本终端数据）
+      try {
+        const body = JSON.parse(ev.data)
+        if (body?.lh) { handleCtrl(body.lh); return }
+      } catch { /* 非 JSON，按终端数据处理 */ }
+      term?.write(ev.data)
+      return
+    }
+    term?.write(new Uint8Array(ev.data as ArrayBuffer))
+  }
   ws.onclose = async ev => {
     status.value = 'closed'
     if (ev.code === 4404 || (ev.reason || '').includes('会话已结束')) {

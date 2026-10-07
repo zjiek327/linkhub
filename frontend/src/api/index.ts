@@ -89,6 +89,10 @@ export const api = {
     http.post<{ session_id: number; node_id: string }>(`/cluster/proxy/${nodeId}/open`, { connection_id: connectionId }).then(r => r.data),
   proxyCloseSession: (nodeId: string, sessionId: number) =>
     http.post(`/cluster/proxy/${nodeId}/sessions/${sessionId}/close`).then(r => r.data),
+  proxyDeleteDevice: (nodeId: string, deviceId: number) =>
+    http.delete(`/cluster/proxy/${nodeId}/devices/${deviceId}`),
+  proxyFromTemplate: (nodeId: string, key: string, body: { name: string; param_overrides?: Record<string, any> }) =>
+    http.post(`/cluster/proxy/${nodeId}/from-template/${key}`, body).then(r => r.data),
   batchExec: (targets: { node_id: string; device_id: number }[], command: string, wait_ms = 1500) =>
     http.post<{ results: BatchResult[] }>('/cluster/batch/exec', { targets, command, wait_ms }).then(r => r.data),
 }

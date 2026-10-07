@@ -29,6 +29,12 @@
         </ul>
       </el-alert>
       <el-form label-width="110px">
+        <el-form-item v-if="peers.length" label="目标节点">
+          <el-select v-model="targetNode" style="width:100%">
+            <el-option label="本机" value="" />
+            <el-option v-for="n in peers" :key="n.node_id" :label="n.name" :value="n.node_id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="设备名称" required><el-input v-model="createName" placeholder="如：机柜A-树莓派01" /></el-form-item>
         <template v-for="(c, i) in current?.default_connections ?? []" :key="i">
           <el-form-item v-if="c.kind === 'serial'" :label="`${c.name} 端口`">
@@ -50,14 +56,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api, type SerialPort, type Template } from '../api'
+import { api, type ClusterNode, type SerialPort, type Template } from '../api'
 
 const router = useRouter()
 const templates = ref<Template[]>([])
 const ports = ref<SerialPort[]>([])
+const peers = ref<ClusterNode[]>([])
 const dialogVisible = ref(false)
 const current = ref<Template | null>(null)
 const createName = ref('')
+const targetNode = ref('')
 const portOverrides = ref<Record<number, string>>({})
 
 const notes = computed<string[]>(() => current.value?.spec?.notes ?? [])
@@ -65,6 +73,7 @@ const notes = computed<string[]>(() => current.value?.spec?.notes ?? [])
 function useTemplate(tpl: Template) {
   current.value = tpl
   createName.value = ''
+  targetNode.value = ''
   portOverrides.value = {}
   dialogVisible.value = true
 }
@@ -75,7 +84,14 @@ async function create() {
   for (const [i, port] of Object.entries(portOverrides.value)) {
     if (port) overrides[Number(i)] = { port }
   }
-  const dev = await api.fromTemplate(current.value.key, { name: createName.value, param_overrides: overrides })
+  let devName = createName.value
+  if (targetNode.value) {
+    await api.proxyFromTemplate(targetNode.value, current.value.key, { name: devName, param_overrides: overrides })
+    ElMessage.success(`已在远程节点创建「${devName}」`)
+    dialogVisible.value = false
+    return  // 远程设备经目录同步出现在设备列表
+  }
+  const dev = await api.fromTemplate(current.value.key, { name: devName, param_overrides: overrides })
   ElMessage.success(`设备「${dev.name}」已创建`)
   dialogVisible.value = false
   router.push(`/devices/${dev.id}`)
@@ -84,6 +100,12 @@ async function create() {
 onMounted(async () => {
   templates.value = await api.templates()
   try { ports.value = await api.serialPorts() } catch { /* 无串口环境 */ }
+  try {
+    const info = await api.clusterInfo()
+    if (info.enabled) {
+      peers.value = (await api.clusterNodes()).filter(n => !n.is_self && n.status === 'online')
+    }
+  } catch { /* 单机模式 */ }
 })
 </script>
 

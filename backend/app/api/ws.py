@@ -1,8 +1,13 @@
-"""WebSocket 网关：终端数据流（本机直读 / 集群中继）+ 事件推送 + 集群内部 WS。"""
+"""WebSocket 网关：终端数据流（本机直读 / 集群中继）+ 事件推送 + 集群内部 WS。
+
+终端控制消息约定：文本帧且 JSON 含 "lh" 键 → 控制消息（写权限申请/授权等）；
+其余文本/二进制帧 = 终端数据。
+"""
 import asyncio
 import contextlib
 import json
 import logging
+import secrets
 
 import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -18,6 +23,20 @@ log = logging.getLogger("linkhub.ws")
 router = APIRouter()
 
 
+def _parse_control(data: bytes | str) -> dict | None:
+    """文本帧且为 {"lh": ...} JSON → 控制消息，否则 None（终端数据）。"""
+    if isinstance(data, bytes):
+        return None
+    if not data.startswith('{"lh"'):
+        return None
+    try:
+        msg = json.loads(data)
+        inner = msg.get("lh")
+        return inner if isinstance(inner, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
 # ---------- 共享管道：本地会话 <-> 任一 WS 端（浏览器或 peer 中继） ----------
 async def _pipe_session(ws: WebSocket, session_id: int) -> None:
     rt = manager.get(session_id)
@@ -26,34 +45,48 @@ async def _pipe_session(ws: WebSocket, session_id: int) -> None:
         await ws.close(code=4404, reason="会话不存在或已关闭")
         return
     await ws.accept()
-    q = manager.subscribe(session_id)
+    client_id = ws.query_params.get("cid") or ("anon-" + secrets.token_hex(4))
+    name = ws.query_params.get("name", "")
+    q, is_writer = manager.subscribe(session_id, client_id, name)
+    await ws.send_text(json.dumps({"lh": {"type": "role", "writer": rt.writer_id,
+                                          "me": client_id}}, ensure_ascii=False))
     local_echo = bool(rt.params.get("local_echo", False))
 
-    async def downstream():  # 设备 → 对端
+    async def downstream():  # 设备/控制消息 → 对端
         while True:
             try:
-                chunk = await asyncio.wait_for(q.get(), timeout=2)
-                await ws.send_bytes(chunk)
+                item = await asyncio.wait_for(q.get(), timeout=2)
+                if isinstance(item, bytes):
+                    await ws.send_bytes(item)
+                else:
+                    await ws.send_text(json.dumps({"lh": item}, ensure_ascii=False))
             except TimeoutError:
                 if manager.get(session_id) is None:  # 会话已终结，主动断开
                     await ws.close(code=1000, reason="会话已结束")
                     return
 
-    async def upstream():  # 对端 → 设备
+    async def upstream():  # 对端 → 设备/控制
         while True:
             try:
                 msg = await ws.receive()
             except Exception:  # 对端断开（含断开后重复 receive）
                 return
-            data = msg.get("bytes") or (msg.get("text") or "").encode()
+            data = msg.get("bytes") if msg.get("bytes") is not None else msg.get("text")
             if not data:
                 continue
+            ctrl = _parse_control(data)
+            if ctrl is not None:
+                manager.control(session_id, client_id, ctrl)
+                continue
+            payload = data if isinstance(data, bytes) else data.encode()
             try:
-                await manager.write(session_id, data)
+                written = await manager.write(session_id, payload, client_id)
             except Exception:
                 return
-            if local_echo:
-                await ws.send_bytes(data)
+            if not written:
+                await ws.send_text(json.dumps({"lh": {"type": "input_blocked"}}, ensure_ascii=False))
+            elif local_echo:
+                await ws.send_bytes(payload)
 
     tasks = [asyncio.create_task(downstream()), asyncio.create_task(upstream())]
     try:
@@ -61,7 +94,7 @@ async def _pipe_session(ws: WebSocket, session_id: int) -> None:
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        manager.unsubscribe(session_id, q)
+        manager.unsubscribe(session_id, client_id)
         for t in tasks:
             t.cancel()
             # CancelledError 继承 BaseException，必须显式 suppress
@@ -83,28 +116,37 @@ async def terminal(ws: WebSocket, session_id: int, node: str | None = None):
 
 
 async def _relay_terminal(ws: WebSocket, session_id: int, node_id: str) -> None:
-    """浏览器↔本节点↔归属节点 的字节中继。"""
+    """浏览器↔本节点↔归属节点 的字节中继（透传文本/二进制帧类型与 cid）。"""
     peer = state.peers.get(node_id)
     if peer is None or peer.status != "online":
         await ws.accept()
         await ws.close(code=4403, reason=f"节点 {node_id} 不在线")
         return
     await ws.accept()
-    url = f"{ws_address(peer.address)}/ws/cluster/relay/{session_id}"
+    cid = ws.query_params.get("cid", "")
+    name = ws.query_params.get("name", "")
+    url = f"{ws_address(peer.address)}/ws/cluster/relay/{session_id}?cid={cid}&name={name}"
     headers = {"X-LinkHub-Token": get_settings().cluster_token,
                "X-LinkHub-Node-Id": state.self_id}
     try:
         async with websockets.connect(url, additional_headers=headers, ping_interval=15) as pws:
             async def browser_to_peer():
                 while True:
-                    msg = await ws.receive()
-                    data = msg.get("bytes") or (msg.get("text") or "").encode()
-                    if data:
-                        await pws.send(data)
+                    try:
+                        msg = await ws.receive()
+                    except Exception:
+                        return
+                    if msg.get("bytes") is not None:
+                        await pws.send(msg["bytes"])
+                    elif msg.get("text") is not None:
+                        await pws.send(msg["text"])
 
             async def peer_to_browser():
                 async for chunk in pws:
-                    await ws.send_bytes(chunk if isinstance(chunk, bytes) else chunk.encode())
+                    if isinstance(chunk, str):
+                        await ws.send_text(chunk)  # 控制消息保文本帧类型
+                    else:
+                        await ws.send_bytes(chunk)
 
             tasks = [asyncio.create_task(browser_to_peer()), asyncio.create_task(peer_to_browser())]
             try:

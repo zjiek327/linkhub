@@ -46,7 +46,8 @@
         <el-table-column label="操作" width="150">
           <template #default="{ row }">
             <el-button size="small" @click="goDetail(row)">详情</el-button>
-            <el-popconfirm v-if="!isRemote(row)" title="确定删除该设备及其全部连接配置？" @confirm="remove(row.id)">
+            <el-popconfirm :title="isRemote(row) ? '剔除该远程设备？（在归属节点上级联删除）' : '确定删除该设备及其全部连接配置？'"
+                           @confirm="remove(row)">
               <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
             </el-popconfirm>
           </template>
@@ -166,8 +167,9 @@ async function create() {
   form.name = ''; form.description = ''; form.location = ''; form.owner = ''; form.tags = []
   load()
 }
-async function remove(id: number) {
-  await api.deleteDevice(id)
+async function remove(row: Device) {
+  if (isRemote(row)) await api.proxyDeleteDevice(row.node_id, row.id)
+  else await api.deleteDevice(row.id)
   ElMessage.success('已删除')
   load()
 }

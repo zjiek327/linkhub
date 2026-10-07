@@ -151,10 +151,18 @@ def test_remote_terminal_relay(cluster):
         sid = r.json()["session_id"]
         assert r.json()["node_id"] == b_id
 
-        # 经 A 的中继 WS 收发
+        # 经 A 的中继 WS 收发（跳过角色控制帧）
         with ws_connect(f"ws://127.0.0.1:{PORT_A}/ws/terminal/{sid}?node={b_id}") as ws:
             ws.send(b"whoami\r")
-            data = ws.recv(timeout=5)
+            deadline = time.time() + 5
+            data = b""
+            while time.time() < deadline:
+                chunk = ws.recv(timeout=2)
+                if isinstance(chunk, str):   # {"lh": ...} 控制帧
+                    continue
+                data += chunk
+                if b"ok:whoami" in data:
+                    break
             assert b"ok:whoami" in data  # B 侧 pty 回显经中继回到浏览器
         httpx.post(f"{A}/api/cluster/proxy/{b_id}/sessions/{sid}/close")
     finally:
@@ -208,14 +216,17 @@ def test_node_offline_grays_devices(cluster):
     r = httpx.post(f"{A}/api/cluster/proxy/{b_id}/open", json={"connection_id": 1})
     assert r.status_code == 503
 
-    # 重启 B：心跳恢复后应自动回到 online，设备目录重新同步
+    # 重启 B（全新数据库 = 新身份）：A 应自动替换旧身份，同地址节点回到 online
     tmp = tempfile.mkdtemp(prefix="linkhub-restart-")
-    pb = _start_node(PORT_B, "节点B", str(tmp_path_or_db(tmp)))
+    pb = _start_node(PORT_B, "节点B-新", str(tmp_path_or_db(tmp)))
     _wait_health(B)
 
     def back_online():
-        nodes = {n["node_id"]: n for n in httpx.get(f"{A}/api/cluster/nodes").json()}
-        return nodes.get(b_id, {}).get("status") == "online"
+        nodes = httpx.get(f"{A}/api/cluster/nodes").json()
+        same_addr = [n for n in nodes if n["address"] == f"http://127.0.0.1:{PORT_B}"]
+        # 旧身份已被替换，同地址只剩一个 online 的新身份
+        return (len(same_addr) == 1 and same_addr[0]["status"] == "online"
+                and same_addr[0]["node_id"] != b_id)
     _wait_until(back_online, timeout=15)
     pb.terminate()
     pb.wait(timeout=5)

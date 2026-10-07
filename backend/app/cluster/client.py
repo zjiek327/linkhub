@@ -73,3 +73,20 @@ async def batch_remote(peer: PeerState, device_ids: list[int], command: str, wai
                          headers=_headers())
         r.raise_for_status()
         return r.json()["results"]
+
+
+async def delete_remote_device(peer: PeerState, device_id: int) -> None:
+    async with httpx.AsyncClient(timeout=8) as c:
+        r = await c.delete(f"{peer.address}/api/cluster/internal/devices/{device_id}",
+                           headers=_headers())
+        r.raise_for_status()
+
+
+async def from_template_remote(peer: PeerState, key: str, name: str,
+                               param_overrides: dict) -> dict:
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.post(f"{peer.address}/api/cluster/internal/devices/from-template/{key}",
+                         json={"name": name, "param_overrides": param_overrides},
+                         headers=_headers())
+        r.raise_for_status()
+        return r.json()

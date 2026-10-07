@@ -152,7 +152,16 @@ cmd_stop() {
   for name in backend frontend; do
     local pidfile="$RUN_DIR/$name.pid"
     if is_running "$pidfile"; then
-      kill -TERM -- "-$(cat "$pidfile")" 2>/dev/null || kill "$(cat "$pidfile")" 2>/dev/null || true
+      local pid; pid=$(cat "$pidfile")
+      kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      # 优雅退出最多等 5 秒（uvicorn 会被长连 WS 拖住），超时强杀
+      for _ in $(seq 1 50); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+      fi
       rm -f "$pidfile"
       ok "$name 已停止"
     else

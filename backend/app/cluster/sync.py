@@ -71,6 +71,12 @@ async def _heartbeat_loop(peer: PeerState) -> None:
     while True:
         try:
             info = await client.ping(peer.address)
+            # 同地址但 node_id 变了 → 对方重装了身份，自动替换幽灵节点
+            if info.get("node_id") and info["node_id"] != peer.node_id:
+                log.info("节点 %s 身份变更 %s → %s，自动替换",
+                         peer.address, peer.node_id, info["node_id"])
+                asyncio.create_task(replace_identity(peer, info))
+                return
             peer.last_seen = asyncio.get_running_loop().time()
             peer.resources = info.get("resources", {})
             if peer.status != "online":
@@ -80,6 +86,29 @@ async def _heartbeat_loop(peer: PeerState) -> None:
             if peer.status == "online":
                 await _set_peer_status(peer, "offline")
         await asyncio.sleep(settings.heartbeat_interval)
+
+
+async def replace_identity(old: PeerState, info: dict) -> None:
+    """旧身份 → 新身份：清理旧 peer 的目录缓存与数据库行，注册新 peer。"""
+    from ..models import Node
+    state.drop_peer(old.node_id)  # 心跳任务已返回，这里只清理事件链路与缓存
+    async with SessionLocal() as db:
+        row = await db.get(Node, old.node_id)
+        if row:
+            await db.delete(row)
+        new_row = await db.get(Node, info["node_id"])
+        if new_row is None:
+            new_row = Node(node_id=info["node_id"])
+            db.add(new_row)
+        new_row.name = info.get("name", "")
+        new_row.address = old.address
+        new_row.status = "online"
+        new_row.is_self = False
+        new_row.last_seen = datetime.now(timezone.utc)
+        await db.commit()
+    bus.publish("node_status", {"node_id": old.node_id, "status": "offline", "replaced": True})
+    peer = state.register_peer(info["node_id"], info.get("name", ""), old.address)
+    await attach_peer(peer)
 
 
 async def attach_peer_directory(peer: PeerState) -> None:

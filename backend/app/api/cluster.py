@@ -87,13 +87,21 @@ async def join(body: JoinIn):
 
 
 async def _upsert_peer(node_id: str, name: str, address: str):
+    """注册/更新 peer。同地址换过身份的（重装丢库）自动剔除旧身份。"""
     from datetime import datetime, timezone
+    address = address.rstrip("/")
     async with SessionLocal() as db:
+        rows = (await db.execute(select(Node).where(Node.address == address))).scalars().all()
+        for stale in rows:
+            if stale.node_id != node_id and not stale.is_self:
+                log.info("剔除同地址旧身份: %s（被 %s 替换）", stale.node_id, node_id)
+                state.drop_peer(stale.node_id)
+                await db.delete(stale)
         row = await db.get(Node, node_id)
         if row is None:
             row = Node(node_id=node_id)
             db.add(row)
-        row.name, row.address, row.is_self = name, address.rstrip("/"), False
+        row.name, row.address, row.is_self = name, address, False
         row.status, row.last_seen = "online", datetime.now(timezone.utc)
         await db.commit()
     peer = state.register_peer(node_id, name, address)
@@ -169,6 +177,36 @@ async def proxy_close(node_id: str, session_id: int):
     peer = _peer_or_404(node_id)
     await client.close_remote(peer, session_id)
     return {"closed": True}
+
+
+@router.delete("/proxy/{node_id}/devices/{device_id}", status_code=204)
+async def proxy_delete_device(node_id: str, device_id: int):
+    """剔除远程节点的设备（级联清理在归属节点完成）。"""
+    peer = _peer_or_404(node_id)
+    if peer.status != "online":
+        raise HTTPException(503, f"节点 {peer.name} 不在线")
+    try:
+        await client.delete_remote_device(peer, device_id)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(exc.response.status_code, "归属节点返回错误") from exc
+    state.directory.pop((node_id, device_id), None)
+
+
+class _ProxyFromTemplateIn(BaseModel):
+    name: str
+    param_overrides: dict = {}
+
+
+@router.post("/proxy/{node_id}/from-template/{key}", status_code=201)
+async def proxy_from_template(node_id: str, key: str, body: _ProxyFromTemplateIn):
+    """在远程节点上用模板创建设备（设备归属该节点）。"""
+    peer = _peer_or_404(node_id)
+    if peer.status != "online":
+        raise HTTPException(503, f"节点 {peer.name} 不在线")
+    try:
+        return await client.from_template_remote(peer, key, body.name, body.param_overrides)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(exc.response.status_code, "归属节点返回错误") from exc
 
 
 # ---------- 批量执行（C3） ----------

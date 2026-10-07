@@ -143,52 +143,19 @@ async def update_device(device_id: int, body: DeviceIn, db: AsyncSession = Depen
 
 @router.delete("/devices/{device_id}", status_code=204)
 async def delete_device(device_id: int, db: AsyncSession = Depends(get_db)):
-    row = await db.get(Device, device_id)
-    if row is None:
+    from ..services.devices import delete_device_cascade
+    if not await delete_device_cascade(db, device_id):
         raise HTTPException(404, "设备不存在")
-    # 关闭该设备所有活跃会话
-    conn_ids = (await db.execute(
-        select(ConnectionProfile.id).where(ConnectionProfile.device_id == device_id)
-    )).scalars().all()
-    active = (await db.execute(
-        select(Session.id).where(Session.connection_id.in_(conn_ids or [0]), Session.closed_at.is_(None))
-    )).scalars().all()
-    for sid in active:
-        await manager.close(sid)
-    # 显式清理会话与日志（连接配置由 ORM 级联删除）
-    all_sessions = (await db.execute(
-        select(Session.id).where(Session.connection_id.in_(conn_ids or [0]))
-    )).scalars().all()
-    if all_sessions:
-        await db.execute(delete(SessionLog).where(SessionLog.session_id.in_(all_sessions)))
-    if conn_ids:
-        await db.execute(delete(Session).where(Session.connection_id.in_(conn_ids)))
-    await db.delete(row)
-    await db.commit()
-    await _publish_device(device_id, deleted=True)
 
 
 @router.post("/devices/from-template/{template_key}", response_model=DeviceOut, status_code=201)
 async def create_from_template(template_key: str, body: DeviceFromTemplateIn,
                                db: AsyncSession = Depends(get_db)):
-    tpl = (await db.execute(select(Template).where(Template.key == template_key))).scalar_one_or_none()
-    if tpl is None:
+    from ..services.devices import create_device_from_template
+    device = await create_device_from_template(db, template_key, body.name,
+                                               body.group_id, body.param_overrides)
+    if device is None:
         raise HTTPException(404, f"模板 {template_key} 不存在")
-    device = Device(name=body.name, group_id=body.group_id, template_id=tpl.id,
-                    node_id=self_node_id(),
-                    description=f"基于模板「{tpl.name}」创建")
-    db.add(device)
-    await db.flush()
-    for idx, conn in enumerate(tpl.default_connections or []):
-        params = {**conn.get("params", {}), **body.param_overrides.get(idx, {})}
-        db.add(ConnectionProfile(
-            device_id=device.id, kind=conn["kind"],
-            name=conn.get("name", conn["kind"]), params=params,
-            enabled=conn.get("enabled", True), node_id=self_node_id(),
-        ))
-    await db.commit()
-    await db.refresh(device)
-    await _publish_device(device.id)
     return device
 
 

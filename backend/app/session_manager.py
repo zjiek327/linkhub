@@ -22,6 +22,14 @@ MASK_AFTER = (b"assword:", b"PIN:")  # 触发遮蔽的提示词
 
 
 @dataclass
+class ClientState:
+    """一个终端订阅者（浏览器页签）。先进为主控，其余旁观。"""
+    client_id: str
+    name: str
+    queue: asyncio.Queue  # bytes = 终端数据；dict = 控制消息
+
+
+@dataclass
 class SessionRuntime:
     session_id: int
     device_id: int
@@ -29,7 +37,8 @@ class SessionRuntime:
     params: dict
     connection_id: int = 0
     task: asyncio.Task | None = None
-    subscribers: set[asyncio.Queue] = field(default_factory=set)
+    subscribers: dict[str, ClientState] = field(default_factory=dict)
+    writer_id: str | None = None   # 当前持有写权限的客户端
     status: str = "connecting"
     last_error: str = ""
     _masking: bool = False
@@ -131,27 +140,79 @@ class SessionManager:
             await self.close(sid)
 
     # ---------- 写入与订阅 ----------
-    async def write(self, session_id: int, data: bytes) -> None:
+    async def write(self, session_id: int, data: bytes, client_id: str | None = None) -> bool:
+        """client_id=None 为系统内部写入（批量执行等），不受角色限制。
+        返回 False 表示旁观客户端的输入被丢弃。"""
         rt = self._runtimes.get(session_id)
         if rt is None or rt.status != "online":
             raise ConnectorError("会话不在线")
+        if client_id is not None and rt.writer_id is not None and client_id != rt.writer_id:
+            return False
         await rt.connector.write(data)
         log_data = b"******" if rt._masking else data
         # shield：防止用户在写入瞬间关闭终端导致日志丢失
         await asyncio.shield(self._log(session_id, "tx", log_data))
         if data in (b"\r", b"\n") or data.endswith(b"\n"):
             rt._masking = False
+        return True
 
-    def subscribe(self, session_id: int) -> asyncio.Queue:
+    def subscribe(self, session_id: int, client_id: str, name: str = "",
+                  passive: bool = False) -> tuple[asyncio.Queue, bool]:
+        """返回 (队列, 是否主控)。第一个订阅者成为主控（可写），其余旁观。
+        passive=True（批量执行等系统订阅）永不抢主控。"""
         rt = self._runtimes[session_id]
-        q: asyncio.Queue = asyncio.Queue(maxsize=512)
-        rt.subscribers.add(q)
-        return q
+        cs = ClientState(client_id=client_id, name=name, queue=asyncio.Queue(maxsize=512))
+        if client_id in rt.subscribers:  # 同页签重连：沿用角色
+            cs.queue = rt.subscribers[client_id].queue
+        rt.subscribers[client_id] = cs
+        if not passive and (rt.writer_id is None or rt.writer_id == client_id):
+            rt.writer_id = client_id
+        self._cast_control(rt, {"type": "presence", "viewers": len(rt.subscribers)})
+        return cs.queue, rt.writer_id == client_id
 
-    def unsubscribe(self, session_id: int, q: asyncio.Queue) -> None:
+    def unsubscribe(self, session_id: int, client_id: str) -> None:
         rt = self._runtimes.get(session_id)
-        if rt:
-            rt.subscribers.discard(q)
+        if not rt:
+            return
+        rt.subscribers.pop(client_id, None)
+        if rt.writer_id == client_id:
+            rt.writer_id = None
+            self._cast_control(rt, {"type": "writer_free"})
+        self._cast_control(rt, {"type": "presence", "viewers": len(rt.subscribers)})
+
+    # ---------- 写权限控制消息 ----------
+    def control(self, session_id: int, client_id: str, msg: dict) -> None:
+        rt = self._runtimes.get(session_id)
+        if not rt:
+            return
+        mtype = msg.get("type")
+        if mtype == "request_write":
+            if rt.writer_id is None:
+                # 无主控时申请即得
+                rt.writer_id = client_id
+                self._cast_control(rt, {"type": "role_change", "writer": client_id,
+                                        "writer_name": rt.subscribers[client_id].name})
+            else:
+                # 广播给除申请者外的订阅者，主控的 UI 弹出同意/拒绝
+                self._cast_control(rt, {"type": "input_request",
+                                        "from": client_id, "name": msg.get("name", client_id)},
+                                   exclude=client_id)
+        elif mtype == "grant_write" and rt.writer_id == client_id:
+            target = msg.get("to")
+            if target in rt.subscribers:
+                rt.writer_id = target
+                self._cast_control(rt, {"type": "role_change", "writer": target,
+                                        "writer_name": rt.subscribers[target].name})
+        elif mtype == "deny_write" and rt.writer_id == client_id:
+            self._cast_control(rt, {"type": "input_denied", "to": msg.get("to")})
+        elif mtype == "release_write" and rt.writer_id == client_id:
+            rt.writer_id = None
+            self._cast_control(rt, {"type": "writer_free"})
+
+    def _cast_control(self, rt: SessionRuntime, msg: dict, exclude: str | None = None) -> None:
+        for cid, cs in list(rt.subscribers.items()):
+            if cid != exclude and not cs.queue.full():
+                cs.queue.put_nowait(msg)
 
     # ---------- 内部：运行循环 ----------
     async def _run(self, rt: SessionRuntime, params: dict, settings) -> None:
@@ -184,9 +245,9 @@ class SessionManager:
             tail = chunk[-32:]
             if any(p in tail for p in MASK_AFTER):
                 rt._masking = True
-            for q in list(rt.subscribers):
-                if not q.full():
-                    q.put_nowait(chunk)
+            for cs in list(rt.subscribers.values()):
+                if not cs.queue.full():
+                    cs.queue.put_nowait(chunk)
             await asyncio.shield(self._log(rt.session_id, "rx", chunk))
 
     # ---------- 内部：状态/日志 ----------

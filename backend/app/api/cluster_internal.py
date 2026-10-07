@@ -137,6 +137,31 @@ async def batch_exec(body: _BatchExecIn):
     return {"results": results}
 
 
+class _FromTemplateIn(BaseModel):
+    name: str = Field(min_length=1)
+    group_id: int | None = None
+    param_overrides: dict = {}
+
+
+@router.post("/devices/from-template/{key}", status_code=201)
+async def internal_from_template(key: str, body: _FromTemplateIn):
+    from ..services.devices import create_device_from_template
+    async with SessionLocal() as db:
+        device = await create_device_from_template(db, key, body.name,
+                                                   body.group_id, body.param_overrides)
+    if device is None:
+        raise HTTPException(404, f"模板 {key} 不存在")
+    return {"id": device.id, "name": device.name}
+
+
+@router.delete("/devices/{device_id}", status_code=204)
+async def internal_delete_device(device_id: int):
+    from ..services.devices import delete_device_cascade
+    async with SessionLocal() as db:
+        if not await delete_device_cascade(db, device_id):
+            raise HTTPException(404, "设备不存在")
+
+
 @router.get("/connector-kinds")
 async def kinds():
     return list_kinds()

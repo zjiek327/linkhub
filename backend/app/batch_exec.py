@@ -56,7 +56,8 @@ async def _exec_on_connection(conn_id: int, command: str, wait_ms: int) -> dict:
         else:
             sid = rt.session_id
 
-        q = manager.subscribe(sid)
+        q, _ = manager.subscribe(sid, f"batch-{sid}-{id(command)}",
+                                 name="批量执行", passive=True)
         try:
             await manager.write(sid, command.encode() + b"\r")
             chunks, deadline = [], asyncio.get_running_loop().time() + wait_ms / 1000
@@ -65,12 +66,14 @@ async def _exec_on_connection(conn_id: int, command: str, wait_ms: int) -> dict:
                 if left <= 0:
                     break
                 try:
-                    chunks.append(await asyncio.wait_for(q.get(), timeout=left))
+                    item = await asyncio.wait_for(q.get(), timeout=left)
+                    if isinstance(item, bytes):  # 控制消息（dict）不算输出
+                        chunks.append(item)
                 except TimeoutError:
                     break
             return {"ok": True, "output": b"".join(chunks).decode(errors="replace"), "error": ""}
         finally:
-            manager.unsubscribe(sid, q)
+            manager.unsubscribe(sid, f"batch-{sid}-{id(command)}")
     except Exception as exc:
         return {"ok": False, "output": "", "error": str(exc)}
     finally:

@@ -27,6 +27,16 @@ def _wait_online(client, session_id, timeout=5):
     raise AssertionError("会话上线超时")
 
 
+def _recv_bytes(ws, timeout=3):
+    """收终端数据帧（跳过角色等文本控制帧）。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        m = ws.receive()
+        if m.get("bytes") is not None:
+            return m["bytes"]
+    raise TimeoutError("没等到数据帧")
+
+
 def test_serial_session_full_flow(client, pty_pair):
     """打开会话 → 双向收发 → 日志落盘 → 密码遮蔽 → 关闭。全链路模拟树莓派串口登录。"""
     master, slave_name = pty_pair
@@ -49,12 +59,12 @@ def test_serial_session_full_flow(client, pty_pair):
     # WebSocket 终端：rx（设备→浏览器）
     with client.websocket_connect(f"/ws/terminal/{sid}") as ws:
         os.write(master, b"raspberrypi login: ")
-        data = ws.receive_bytes()
+        data = _recv_bytes(ws)
         assert b"login:" in data
 
         # tx（浏览器→设备）：模拟输入密码，验证遮蔽
         os.write(master, b"Password:")   # 设备回显密码提示 → 触发遮蔽
-        ws.receive_bytes()
+        _recv_bytes(ws)
         ws.send_bytes(b"raspberry\r")
         got = b""
         deadline = time.time() + 3
