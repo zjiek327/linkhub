@@ -5,6 +5,8 @@ import tempfile
 _TMP = tempfile.mkdtemp(prefix="linkhub-test-")
 os.environ["LINKHUB_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP}/test.db"
 os.environ.setdefault("LINKHUB_SECRET_KEY", "test-secret")
+# 测试用独立发现端口，避免广播包污染同机上运行中的真实节点
+os.environ["LINKHUB_DISCOVERY_PORT"] = "37899"
 
 import pytest
 from starlette.testclient import TestClient
