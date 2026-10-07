@@ -56,6 +56,45 @@ uvicorn app.main:app --host 0.0.0.0
 - **批量执行**：设备列表勾选多台（可跨节点）→ 批量执行 → 一条命令并发下发、分节点汇总输出
 - **离线容错**：节点掉线 15s 内标灰，设备保留可见；恢复后自动重连并对账设备目录
 
+### 多机部署示例（3 台电脑）
+
+拓扑：A `192.168.1.10`（插树莓派）、B `192.168.1.11`（插香橙派）、C `192.168.1.12`（纯操作端）。
+
+```bash
+# 0. 三台机器都装代码（任选一机生成令牌，三机共用）
+git clone https://github.com/zjiek327/linkhub.git && cd linkhub/backend
+python3 -m venv .venv && source .venv/bin/activate && pip install -e .
+sudo usermod -aG dialout $USER   # 插板子的机器才需要，重登录生效
+TOKEN=$(openssl rand -hex 32)    # 只生成一次，抄到另外两台
+
+# 1. 电脑 A（192.168.1.10）
+LINKHUB_CLUSTER_ENABLED=true LINKHUB_CLUSTER_TOKEN=$TOKEN \
+LINKHUB_NODE_NAME=主机A LINKHUB_ADVERTISE_ADDR=http://192.168.1.10:8000 \
+uvicorn app.main:app --host 0.0.0.0
+
+# 2. 电脑 B（192.168.1.11）：改 NODE_NAME 和 ADVERTISE_ADDR 即可
+
+# 3. 电脑 C 同上；不插板子也能当操作端
+
+# 4. 组网（任选一台执行一次，gossip 会自动互认其余节点）
+curl -X POST http://192.168.1.11:8000/api/cluster/join \
+  -H 'Content-Type: application/json' -d '{"address":"http://192.168.1.10:8000"}'
+curl -X POST http://192.168.1.12:8000/api/cluster/join \
+  -H 'Content-Type: application/json' -d '{"address":"http://192.168.1.10:8000"}'
+```
+
+同网段也可跳过第 4 步：mDNS 会把三台机器送进彼此的"集群管理 → 待批准"列表，点批准即可。
+
+验证（任一台上）：`curl http://192.168.1.10:8000/api/cluster/nodes` 应看到三台 online。
+
+前端访问：每台机器 `cd frontend && npm install && npm run dev -- --host`，或用 `deploy/docker-compose.yml`（前端打包在 8080 端口）。浏览器打开**任意一台**的地址都能看到全集群设备并打开任意板子的终端。
+
+注意事项：
+- 防火墙放行 8000 端口（如 `sudo ufw allow 8000`）
+- `ADVERTISE_ADDR` 必须填**别的机器能访问到**的地址（本机局域网 IP，不要填 127.0.0.1）
+- 三台机器 `CLUSTER_TOKEN` 不一致会握手 403
+- 看不到 mDNS 待批准 = 网络禁了组播，用手动加入即可，功能无差异
+
 ## 快速开始
 
 ### 本地开发
