@@ -9,7 +9,9 @@
       <el-input-number v-else-if="prop.type === 'integer'" v-model="model[key]" :min="0" style="width: 100%" />
       <el-select v-else-if="key === 'port'" v-model="model[key]" filterable allow-create
                  placeholder="选择或输入串口" style="width: 100%">
-        <el-option v-for="p in ports" :key="p.device" :label="`${p.device} · ${p.description}`" :value="p.device" />
+        <el-option v-for="p in ports" :key="(p.node_id || 'local') + p.device"
+                   :label="p.node ? `${p.node} · ${p.device} · ${p.description}` : `${p.device} · ${p.description}`"
+                   :value="p.device" />
       </el-select>
       <el-input v-else v-model="model[key]" :placeholder="prop.description || ''" />
       <div v-if="prop.description && key !== 'port'" class="desc">{{ prop.description }}</div>

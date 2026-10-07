@@ -10,6 +10,7 @@
         <el-menu-item index="/"><el-icon><Monitor /></el-icon>仪表盘</el-menu-item>
         <el-menu-item index="/devices"><el-icon><Cpu /></el-icon>设备管理</el-menu-item>
         <el-menu-item index="/templates"><el-icon><Files /></el-icon>模板库</el-menu-item>
+        <el-menu-item index="/cluster"><el-icon><Connection /></el-icon>集群管理</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -25,5 +26,5 @@
 </template>
 
 <script setup lang="ts">
-import { Monitor, Cpu, Files } from '@element-plus/icons-vue'
+import { Monitor, Cpu, Files, Connection } from '@element-plus/icons-vue'
 </script>

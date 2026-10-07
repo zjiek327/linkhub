@@ -6,6 +6,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import api_router, ws_router
+from .cluster.mdns import mdns
+from .cluster.state import state
+from .cluster.sync import start_background_tasks
 from .config import get_settings
 from .database import SessionLocal, init_db
 from .services.templates import sync_builtin_templates
@@ -20,7 +23,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     async with SessionLocal() as db:
         await sync_builtin_templates(db, settings.builtin_templates_dir)
+    # 集群模式：注册本机身份、拉起后台同步与 mDNS
+    await state.start()
+    if state.enabled:
+        start_background_tasks()
+        await mdns.start()
     yield
+    await mdns.stop()
+    await state.stop()
     await manager.close_all()
 
 

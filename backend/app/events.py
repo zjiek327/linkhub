@@ -15,8 +15,9 @@ class EventBus:
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._subscribers.discard(q)
 
-    def publish(self, event: str, data: dict[str, Any]) -> None:
-        msg = {"event": event, "data": data}
+    def publish(self, event: str, data: dict[str, Any], origin: str | None = None) -> None:
+        """origin=None 表示本机产生（会转发给 peer）；否则是某 peer 转发来的，不再二次转发。"""
+        msg = {"event": event, "data": data, "_origin": origin}
         for q in list(self._subscribers):
             if q.full():
                 continue  # 慢消费者丢事件，不阻塞总线

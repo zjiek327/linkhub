@@ -4,6 +4,7 @@ import asyncio
 from fastapi import APIRouter
 from serial.tools import list_ports
 
+from ..cluster.state import state
 from ..schemas import SerialPortInfo, SerialTestIn, SerialTestOut
 
 router = APIRouter(prefix="/api/serial", tags=["serial"])
@@ -11,21 +12,29 @@ router = APIRouter(prefix="/api/serial", tags=["serial"])
 
 @router.get("/ports", response_model=list[SerialPortInfo])
 async def list_serial_ports(include_virtual: bool = False):
-    """枚举本机串口。默认只列 USB 转串口 / Gadget(ttyACM) 等真实可用口，
-    include_virtual=true 时连同主板 ttyS* 一起返回。"""
-    result = []
-    for p in list_ports.comports():
-        is_usb = "USB" in (p.hwid or "").upper() or "ttyACM" in p.device
-        has_info = bool(p.description and p.description != "n/a")
-        if not include_virtual and not (is_usb or has_info):
-            continue
-        result.append(SerialPortInfo(
-            device=p.device,
-            description=p.description or "",
-            hwid=p.hwid or "",
-            is_usb=is_usb,
-        ))
+    """枚举串口。默认只列 USB 转串口 / Gadget(ttyACM) 等真实可用口；
+    集群模式下聚合同步各节点上报的资源。"""
+    result = [_port_info(p, include_virtual) for p in list_ports.comports()]
+    result = [p for p in result if p is not None]
+    if state.enabled:
+        for peer in state.peers.values():
+            if peer.status != "online":
+                continue
+            for sp in (peer.resources or {}).get("serial_ports", []):
+                result.append(SerialPortInfo(
+                    device=sp["device"], description=sp.get("description", ""),
+                    hwid="", is_usb=True, node=peer.name, node_id=peer.node_id,
+                ))
     return result
+
+
+def _port_info(p, include_virtual: bool) -> SerialPortInfo | None:
+    is_usb = "USB" in (p.hwid or "").upper() or "ttyACM" in p.device
+    has_info = bool(p.description and p.description != "n/a")
+    if not include_virtual and not (is_usb or has_info):
+        return None
+    return SerialPortInfo(device=p.device, description=p.description or "",
+                          hwid=p.hwid or "", is_usb=is_usb)
 
 
 @router.post("/test", response_model=SerialTestOut)

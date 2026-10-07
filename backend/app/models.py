@@ -13,6 +13,27 @@ class Base(DeclarativeBase):
     pass
 
 
+class Meta(Base):
+    """键值元数据（node_id 持久化等）。"""
+    __tablename__ = "meta"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+
+
+class Node(Base):
+    """集群节点（含本机，is_self 区分）。"""
+    __tablename__ = "nodes"
+
+    node_id: Mapped[str] = mapped_column(String(32), primary_key=True)  # n-xxxxxx
+    name: Mapped[str] = mapped_column(String(128), default="")
+    address: Mapped[str] = mapped_column(String(256), default="")       # http://ip:port
+    status: Mapped[str] = mapped_column(String(16), default="online")   # online / offline
+    is_self: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resources: Mapped[dict] = mapped_column(JSON, default=dict)         # {serial_ports: [...]}
+
+
 class DeviceGroup(Base):
     __tablename__ = "device_groups"
 
@@ -50,6 +71,7 @@ class Device(Base):
     tags: Mapped[list] = mapped_column(JSON, default=list)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("device_groups.id"), nullable=True)
     template_id: Mapped[int | None] = mapped_column(ForeignKey("templates.id"), nullable=True)
+    node_id: Mapped[str] = mapped_column(String(32), default="local", index=True)  # 归属节点
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -78,6 +100,7 @@ class ConnectionProfile(Base):
     kind: Mapped[str] = mapped_column(String(32))  # serial | ssh | ble | ...
     name: Mapped[str] = mapped_column(String(128))
     params: Mapped[dict] = mapped_column(JSON, default=dict)
+    node_id: Mapped[str] = mapped_column(String(32), default="local", index=True)  # 物理端口所在节点
     credential_id: Mapped[int | None] = mapped_column(ForeignKey("credentials.id"), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -93,7 +116,8 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    connection_id: Mapped[int] = mapped_column(ForeignKey("connection_profiles.id"), index=True)
+    connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connection_profiles.id"), index=True, nullable=True)  # None = 内联临时会话
     opened_by: Mapped[str] = mapped_column(String(128), default="admin")
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

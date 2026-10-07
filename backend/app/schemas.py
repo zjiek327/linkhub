@@ -56,7 +56,12 @@ class DeviceOut(DeviceIn):
     template_id: int | None
     created_at: datetime
     updated_at: datetime
-    online: bool = False  # 由会话运行态填充
+    online: bool = False        # 由会话运行态填充
+    node_id: str = "local"      # 归属节点
+    node_name: str = ""         # 归属节点显示名
+    node_online: bool = True    # 归属节点是否在线（离线→前端置灰）
+    # 仅联邦条目（远程设备）带摘要；validation_alias 避开 ORM connections 关系属性防懒加载
+    connections: list[dict[str, Any]] = Field(default=[], validation_alias="connections_snapshot")
 
 
 class DeviceFromTemplateIn(BaseModel):
@@ -78,12 +83,14 @@ class ConnectionIn(BaseModel):
     params: dict[str, Any] = {}
     credential_id: int | None = None
     enabled: bool = True
+    node_id: str | None = None  # None = 本机；集群下可指向远程节点的物理端口
 
 
 class ConnectionOut(ConnectionIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
     device_id: int
+    node_id: str = "local"
 
 
 # ---------- 串口 ----------
@@ -92,6 +99,8 @@ class SerialPortInfo(BaseModel):
     description: str
     hwid: str
     is_usb: bool
+    node: str = ""       # 所属节点名（空 = 本机）
+    node_id: str = ""
 
 
 class SerialTestIn(BaseModel):
@@ -119,6 +128,7 @@ class SessionOut(BaseModel):
     closed_at: datetime | None
     status: str
     last_error: str
+    node_id: str = ""  # 会话实际所在节点（空 = 本机）
 
 
 class SessionLogOut(BaseModel):
@@ -134,3 +144,90 @@ class StatsOut(BaseModel):
     devices_online: int
     sessions_online: int
     templates_total: int
+    nodes_total: int = 0
+    nodes_online: int = 0
+
+
+# ---------- 集群 ----------
+class NodeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    node_id: str
+    name: str
+    address: str
+    status: str
+    is_self: bool
+    last_seen: datetime
+    resources: dict[str, Any] = {}
+
+
+class JoinIn(BaseModel):
+    address: str = Field(min_length=1)          # http://192.168.1.10:8000
+    token: str | None = None                    # 不传则用本机配置的集群令牌
+
+
+class HandshakeIn(BaseModel):
+    node_id: str
+    name: str
+    address: str
+
+
+class DirectoryEntry(BaseModel):
+    """设备目录条目：远程设备的完整摘要（用于联邦列表渲染）。"""
+    node_id: str
+    id: int
+    name: str
+    description: str = ""
+    location: str = ""
+    owner: str = ""
+    tags: list[str] = []
+    group_id: int | None = None
+    template_id: int | None = None
+    online: bool = False
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    connections: list[dict[str, Any]] = []      # [{id, kind, name, node_id, enabled}]
+
+
+class DiscoveredNode(BaseModel):
+    node_id: str
+    name: str
+    address: str
+
+
+class RemoteOpenIn(BaseModel):
+    connection_id: int
+
+
+class RemoteOpenOut(BaseModel):
+    session_id: int
+    node_id: str
+
+
+class ProxyDeviceOut(BaseModel):
+    device: dict[str, Any]
+    connections: list[dict[str, Any]]
+
+
+# ---------- 批量执行 ----------
+class BatchTarget(BaseModel):
+    node_id: str = "local"
+    device_id: int
+
+
+class BatchExecIn(BaseModel):
+    targets: list[BatchTarget]
+    command: str = Field(min_length=1)
+    wait_ms: int = Field(default=1500, ge=100, le=30000)
+
+
+class BatchResult(BaseModel):
+    node_id: str
+    device_id: int
+    device_name: str = ""
+    ok: bool
+    output: str = ""
+    error: str = ""
+
+
+class BatchExecOut(BaseModel):
+    results: list[BatchResult]

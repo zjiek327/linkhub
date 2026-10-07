@@ -45,7 +45,7 @@ import { api, type Session, type Stats } from '../api'
 import { useEvents } from '../api/events'
 import StatusBadge from '../components/StatusBadge.vue'
 
-const stats = ref<Stats>({ devices_total: 0, devices_online: 0, sessions_online: 0, templates_total: 0 })
+const stats = ref<Stats>({ devices_total: 0, devices_online: 0, sessions_online: 0, templates_total: 0, nodes_total: 0, nodes_online: 0 })
 const sessions = ref<Session[]>([])
 
 const cards = computed(() => [
@@ -53,6 +53,7 @@ const cards = computed(() => [
   { icon: '🟢', label: '在线设备', value: stats.value.devices_online },
   { icon: '🔗', label: '活跃会话', value: stats.value.sessions_online },
   { icon: '📦', label: '设备模板', value: stats.value.templates_total },
+  { icon: '🕸️', label: '集群节点', value: stats.value.nodes_total ? `${stats.value.nodes_online}/${stats.value.nodes_total}` : '单机' },
 ])
 
 async function refresh() {

@@ -27,6 +27,7 @@ class SessionRuntime:
     device_id: int
     connector: Connector
     params: dict
+    connection_id: int = 0
     task: asyncio.Task | None = None
     subscribers: set[asyncio.Queue] = field(default_factory=set)
     status: str = "connecting"
@@ -50,7 +51,34 @@ class SessionManager:
     def online_session_ids(self) -> set[int]:
         return {sid for sid, rt in self._runtimes.items() if rt.status == "online"}
 
+    def find_online_by_connection(self, connection_id: int) -> SessionRuntime | None:
+        for sid, rt in self._runtimes.items():
+            if rt.status == "online":
+                # runtime 无 connection_id 字段，用会话 ID 反查太慢——在 open 时记录
+                if getattr(rt, "connection_id", None) == connection_id:
+                    return rt
+        return None
+
     # ---------- 打开/关闭 ----------
+    @staticmethod
+    def _lock_key(kind: str, params: dict, fallback) -> str:
+        return f"{kind}:{params.get('port', fallback)}"
+
+    def _spawn(self, row: Session, kind: str, params: dict, device_id: int,
+               connection_id: int | None, settings) -> Session:
+        connector = create_connector(kind, params)
+        rt = SessionRuntime(
+            session_id=row.id,
+            device_id=device_id,
+            connector=connector,
+            params=dict(params),
+            connection_id=connection_id or 0,
+        )
+        self._runtimes[row.id] = rt
+        self._port_locks.add(self._lock_key(kind, params, row.id))
+        rt.task = asyncio.create_task(self._run(rt, params, settings))
+        return row
+
     async def open(self, connection_id: int, opened_by: str = "admin") -> Session:
         settings = get_settings()
         async with SessionLocal() as db:
@@ -59,26 +87,28 @@ class SessionManager:
                 raise ConnectorError(f"连接配置 {connection_id} 不存在")
             if not profile.enabled:
                 raise ConnectorError(f"连接配置 {profile.name} 已禁用")
-            lock_key = f"{profile.kind}:{profile.params.get('port', connection_id)}"
-            if lock_key in self._port_locks:
+            if self._lock_key(profile.kind, profile.params, connection_id) in self._port_locks:
                 raise ConnectorError("该端口已被其他会话占用，请先关闭对应会话")
 
             row = Session(connection_id=connection_id, opened_by=opened_by, status="connecting")
             db.add(row)
             await db.commit()
             await db.refresh(row)
+            return self._spawn(row, profile.kind, profile.params, profile.device_id,
+                               connection_id, settings)
 
-            connector = create_connector(profile.kind, profile.params)
-            rt = SessionRuntime(
-                session_id=row.id,
-                device_id=profile.device_id,
-                connector=connector,
-                params=dict(profile.params),
-            )
-            self._runtimes[row.id] = rt
-            self._port_locks.add(lock_key)
-            rt.task = asyncio.create_task(self._run(rt, profile.params, settings))
-            return row
+    async def open_inline(self, kind: str, params: dict, device_id: int = 0,
+                          opened_by: str = "admin") -> Session:
+        """无持久连接配置的临时会话（集群代开、批量执行等场景）。"""
+        settings = get_settings()
+        if self._lock_key(kind, params, id(params)) in self._port_locks:
+            raise ConnectorError("该端口已被其他会话占用，请先关闭对应会话")
+        async with SessionLocal() as db:
+            row = Session(connection_id=None, opened_by=opened_by, status="connecting")
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
+            return self._spawn(row, kind, params, device_id, None, settings)
 
     async def close(self, session_id: int) -> bool:
         rt = self._runtimes.get(session_id)
@@ -167,6 +197,7 @@ class SessionManager:
         bus.publish("session_status", {
             "session_id": rt.session_id, "device_id": rt.device_id,
             "status": status, "error": error, "ts": time.time(),
+            "device_online": rt.device_id in self.online_device_ids(),
         })
 
     async def _finalize(self, rt: SessionRuntime, status: str) -> None:
@@ -181,6 +212,7 @@ class SessionManager:
         bus.publish("session_status", {
             "session_id": rt.session_id, "device_id": rt.device_id,
             "status": "closed", "error": rt.last_error, "ts": time.time(),
+            "device_online": rt.device_id in self.online_device_ids(),
         })
         lock_key = f"{rt.connector.kind}:{rt.params.get('port', rt.session_id)}"
         self._port_locks.discard(lock_key)

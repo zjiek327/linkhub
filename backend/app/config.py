@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     reconnect_enabled: bool = True
     reconnect_max_delay: float = 30.0  # 秒，指数退避上限
 
+    # ---- 集群模式（默认关闭 = 单机） ----
+    cluster_enabled: bool = False
+    cluster_token: str = ""                    # 集群令牌，所有节点一致
+    node_name: str = ""                        # 默认取主机名
+    advertise_addr: str = "http://127.0.0.1:8000"  # 其他节点回连本节点用的地址
+    cluster_mdns: bool = True                  # mDNS 自动发现（C2）
+    heartbeat_interval: float = 5.0            # 秒
+    heartbeat_timeout: float = 15.0            # 秒，超时判离线
+    directory_sync_interval: float = 60.0      # 秒，目录反熵对账周期
+    resource_watch_interval: float = 2.0       # 秒，串口热插拔轮询
+
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 

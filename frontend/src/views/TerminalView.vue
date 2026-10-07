@@ -3,6 +3,7 @@
     <div class="bar">
       <el-button size="small" @click="$router.back()">← 返回</el-button>
       <span class="title">会话 #{{ sessionId }}</span>
+      <el-tag v-if="remoteNode" size="small" type="warning" effect="plain">经节点中继</el-tag>
       <StatusBadge :status="status" />
       <span v-if="lastError" class="err">{{ lastError }}</span>
       <div style="flex:1" />
@@ -23,6 +24,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 
 const route = useRoute()
 const sessionId = Number(route.params.sessionId)
+const remoteNode = (route.query.node as string) || ''
 
 const termEl = ref<HTMLElement>()
 const status = ref('connecting')
@@ -49,12 +51,17 @@ onMounted(async () => {
   resizeObserver.observe(termEl.value!)
 
   try {
-    const s = await api.session(sessionId)
-    status.value = s.status
-    lastError.value = s.last_error
+    if (remoteNode) {
+      status.value = 'online'  // 远程会话状态由归属节点维护，中继连上即视为在线
+    } else {
+      const s = await api.session(sessionId)
+      status.value = s.status
+      lastError.value = s.last_error
+    }
   } catch { /* 会话可能刚关闭 */ }
 
-  ws = new WebSocket(wsUrl(`/ws/terminal/${sessionId}`))
+  const nodeQ = remoteNode ? `?node=${remoteNode}` : ''
+  ws = new WebSocket(wsUrl(`/ws/terminal/${sessionId}${nodeQ}`))
   ws.binaryType = 'arraybuffer'
   ws.onopen = () => { status.value = 'online'; term?.focus() }
   ws.onmessage = ev => term?.write(new Uint8Array(ev.data as ArrayBuffer))
@@ -66,7 +73,8 @@ onMounted(async () => {
 })
 
 async function close() {
-  await api.closeSession(sessionId)
+  if (remoteNode) await api.proxyCloseSession(remoteNode, sessionId)
+  else await api.closeSession(sessionId)
   status.value = 'closed'
   ws?.close()
 }
