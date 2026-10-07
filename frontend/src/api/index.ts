@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-export const http = axios.create({ baseURL: '/api', timeout: 10000 })
+export const http = axios.create({ baseURL: '/api', timeout: 30000 })
 
 export function wsUrl(path: string): string {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'

@@ -238,8 +238,12 @@ async function closeSession(id: number) {
   load()
 }
 
+// 事件驱动刷新节流，避免会话状态风暴下的并发堆积
+let reloadTimer: number | undefined
 useEvents(e => {
-  if (e.event === 'session_status' && !isRemote && e.data.device_id === deviceId) load()
+  if (e.event !== 'session_status' || isRemote || e.data.device_id !== deviceId) return
+  if (reloadTimer) return
+  reloadTimer = window.setTimeout(() => { reloadTimer = undefined; load() }, 1500)
 })
 onMounted(async () => {
   kinds.value = await api.connectorKinds()

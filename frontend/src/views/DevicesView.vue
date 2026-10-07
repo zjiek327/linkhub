@@ -188,7 +188,13 @@ async function runBatch() {
   } finally { batchRunning.value = false }
 }
 
-useEvents(e => { if (e.event === 'session_status' || e.event === 'node_status') load() })
+// 事件驱动刷新做节流：事件风暴（节点抖动/批量会话）时避免并发请求堆积
+let reloadTimer: number | undefined
+useEvents(e => {
+  if (e.event !== 'session_status' && e.event !== 'node_status') return
+  if (reloadTimer) return
+  reloadTimer = window.setTimeout(() => { reloadTimer = undefined; load() }, 1500)
+})
 onMounted(async () => {
   clusterInfo.value = await api.clusterInfo()
   if (clusterInfo.value.enabled) {

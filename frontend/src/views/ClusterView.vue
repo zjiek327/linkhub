@@ -164,7 +164,12 @@ async function leave(nodeId: string) {
   load()
 }
 
-useEvents(e => { if (e.event === 'node_status') load() })
+let nodeStatusTimer: number | undefined
+useEvents(e => {
+  if (e.event !== 'node_status') return
+  if (nodeStatusTimer) return
+  nodeStatusTimer = window.setTimeout(() => { nodeStatusTimer = undefined; load() }, 1500)
+})
 onMounted(load)
 // beacon 每 3s 广播，发现列表 5s 轮询保持新鲜
 import { onUnmounted } from 'vue'
