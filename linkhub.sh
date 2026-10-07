@@ -117,9 +117,18 @@ cmd_start() {
   setup_backend
   setup_frontend
 
-  # 集群配置：存在 backend/.env 则加载
+  # 集群配置：存在 backend/.env 则加载（剥离含括号/引号列表的复杂行，只导出简单 KEY=VALUE）
   if [ -f "$BACKEND/.env" ]; then
-    set -a; source "$BACKEND/.env"; set +a
+    set -a
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        \#*|"") continue ;;
+        *\[*\]*|*\'*|*\{*)  # JSON/复杂值行，交给后端 pydantic 自己读 .env
+          ;;
+        *) export "$line" 2>/dev/null || true ;;
+      esac
+    done < "$BACKEND/.env"
+    set +a
     log "已加载 $BACKEND/.env"
   fi
 

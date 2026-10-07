@@ -1,7 +1,9 @@
 """全局配置：环境变量 LINKHUB_* 覆盖。"""
+import json
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
@@ -29,12 +31,23 @@ class Settings(BaseSettings):
     cluster_mdns: bool = True                  # mDNS 自动发现（C2）
     discovery_beacon: bool = True              # UDP 广播发现（单网段更可靠）
     discovery_port: int = 37890
+    # 定向对端地址（广播被网络过滤时用）。支持 JSON 数组或逗号分隔字符串
+    cluster_peers: str = ""
     heartbeat_interval: float = 5.0            # 秒
     heartbeat_timeout: float = 15.0            # 秒，超时判离线
     directory_sync_interval: float = 60.0      # 秒，目录反熵对账周期
     resource_watch_interval: float = 2.0       # 秒，串口热插拔轮询
 
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    def peers_list(self) -> list[str]:
+        """cluster_peers → 地址列表。兼容 JSON 数组 / 逗号或空格分隔。"""
+        v = self.cluster_peers.strip()
+        if not v:
+            return []
+        if v.startswith("["):
+            return [x.strip() for x in json.loads(v) if x.strip()]
+        return [x.strip() for x in v.replace(",", " ").split() if x.strip()]
 
 
 @lru_cache

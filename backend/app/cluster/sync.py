@@ -200,10 +200,55 @@ async def cache_sync_loop() -> None:
         bus.unsubscribe(q)
 
 
+# ---------- 定向 peer 级联（广播被网络过滤时的兜底） ----------
+async def direct_peers_loop() -> None:
+    """对配置的 LINKHUB_CLUSTER_PEERS 地址周期性 ping：
+    已是 peer 则跳过；新节点则自动握手加入。"""
+    from . import client as cluster_client
+    settings = get_settings()
+    while True:
+        await asyncio.sleep(settings.heartbeat_interval)
+        for address in settings.peers_list():
+            addr = address.rstrip("/")
+            if any(p.address == addr for p in state.peers.values()):
+                continue
+            try:
+                info = await cluster_client.ping(addr)
+            except Exception:
+                continue
+            if info.get("node_id") in (state.self_id, None):
+                continue
+            log.info("定向发现节点 %s (%s)，执行握手", info.get("name"), addr)
+            try:
+                resp = await cluster_client.handshake(addr, {
+                    "node_id": state.self_id, "name": state.self_name,
+                    "address": state.address,
+                })
+                await _register_peer_row(resp["node_id"], resp["name"], resp["address"])
+            except Exception as exc:
+                log.warning("定向握手失败 %s: %s", addr, exc)
+
+
+async def _register_peer_row(node_id: str, name: str, address: str) -> None:
+    from ..models import Node
+    async with SessionLocal() as db:
+        row = await db.get(Node, node_id)
+        if row is None:
+            row = Node(node_id=node_id)
+            db.add(row)
+        row.name, row.address, row.is_self = name, address.rstrip("/"), False
+        row.status = "online"
+        row.last_seen = datetime.now(timezone.utc)
+        await db.commit()
+    peer = state.register_peer(node_id, name, address)
+    await attach_peer(peer)
+
+
 # ---------- 服务启停 ----------
 def start_background_tasks() -> None:
     state.background_tasks = [
         asyncio.create_task(directory_sync_loop()),
         asyncio.create_task(resource_watch_loop()),
         asyncio.create_task(cache_sync_loop()),
+        asyncio.create_task(direct_peers_loop()),
     ]
