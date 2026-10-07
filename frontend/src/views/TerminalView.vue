@@ -56,9 +56,14 @@ let sessionDead = false // 后端会话已终结（4404），重连需重开会�
 const encoder = new TextEncoder()
 
 // ---- 多人协作角色：先进为主控（可写），其余旁观（只读） ----
+// crypto.randomUUID 仅安全上下文（HTTPS/localhost）可用，局域网 HTTP 访问需要回退
+function genClientId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return 'cid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12)
+}
 const cid = (() => {
   let v = sessionStorage.getItem('linkhub_cid')
-  if (!v) { v = crypto.randomUUID(); sessionStorage.setItem('linkhub_cid', v) }
+  if (!v) { v = genClientId(); sessionStorage.setItem('linkhub_cid', v) }
   return v
 })()
 const myName = '用户-' + cid.slice(0, 4)
