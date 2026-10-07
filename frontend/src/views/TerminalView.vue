@@ -7,6 +7,10 @@
       <StatusBadge :status="status" />
       <span v-if="lastError" class="err">{{ lastError }}</span>
       <div style="flex:1" />
+      <el-tooltip content="串口无窗口尺寸协商，tmux/vim/htop 显示异常时点这里（注入 stty rows/cols）"
+                  placement="bottom">
+        <el-button size="small" @click="syncSize">⇲ 适配大小</el-button>
+      </el-tooltip>
       <el-button size="small" type="danger" plain :disabled="status === 'closed'" @click="close">关闭会话</el-button>
     </div>
     <div ref="termEl" class="term" />
@@ -36,7 +40,22 @@ let fit: FitAddon | null = null
 let ws: WebSocket | null = null
 let resizeObserver: ResizeObserver | null = null
 let stopWatch: (() => void) | null = null
+let sizeSynced = false  // 手动同步过尺寸后，resize 时持续跟随
 const encoder = new TextEncoder()
+
+/** 串口没有窗口尺寸协商（winsize），远端 tty 一直按 80x24 工作，
+ *  tmux/vim 会缩在左上角。注入 stty 把远端尺寸对齐到当前终端。 */
+function syncSize() {
+  if (!term || !ws || ws.readyState !== WebSocket.OPEN) return
+  ws.send(encoder.encode(`stty rows ${term.rows} cols ${term.cols}\r`))
+  sizeSynced = true
+}
+
+function refit() {
+  fit?.fit()
+  // 已同步过（或开了自动同步）时，窗口变化持续对齐远端尺寸
+  if (sizeSynced || settings.terminal.autoSyncSize) syncSize()
+}
 
 onMounted(async () => {
   term = new Terminal({
@@ -58,7 +77,7 @@ onMounted(async () => {
     fit?.fit()
   }, { deep: true })
 
-  resizeObserver = new ResizeObserver(() => fit?.fit())
+  resizeObserver = new ResizeObserver(() => refit())
   resizeObserver.observe(termEl.value!)
 
   try {

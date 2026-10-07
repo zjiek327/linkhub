@@ -27,12 +27,13 @@ export interface Settings {
     fontFamily: string
     theme: string
     background: string   // 空 = 跟随主题
+    autoSyncSize: boolean  // 窗口变化时自动注入 stty 同步尺寸（串口无尺寸协商）
   }
 }
 
 const DEFAULTS: Settings = {
   themeMode: 'system',
-  terminal: { fontSize: 14, fontFamily: FONT_FAMILIES[0].value, theme: 'dark', background: '' },
+  terminal: { fontSize: 14, fontFamily: FONT_FAMILIES[0].value, theme: 'dark', background: '', autoSyncSize: false },
 }
 
 function load(): Settings {
