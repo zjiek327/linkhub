@@ -1,0 +1,25 @@
+key: raspberry_pi_5
+name: 树莓派 5
+category: 开发板
+icon: 🍓
+description: |
+  Raspberry Pi 5（BCM2712）。注意 5 代调试 UART 在板载专用 3pin JST-SH 调试座上，
+  不再占用 GPIO14/15（默认 UART 仍可通过 raspi-config 配置到 GPIO）。
+spec:
+  soc: BCM2712 (Cortex-A76 ×4 @2.4GHz)
+  ram: [4GB, 8GB]
+  gpio_pinout: { debug_uart: "JST-SH 3pin 调试座", uart_tx_pin: 8, uart_rx_pin: 10, gnd_pin: 6 }
+  notes:
+    - 默认波特率 115200 8N1
+    - 推荐使用官方 Debug Probe 或 3pin 调试线
+default_connections:
+  - kind: serial
+    name: UART 调试串口
+    params:
+      port: /dev/ttyUSB0
+      baudrate: 115200
+      bytesize: 8
+      parity: N
+      stopbits: 1
+      local_echo: false
+      auto_reconnect: true

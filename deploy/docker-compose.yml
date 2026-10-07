@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ../backend
+    environment:
+      LINKHUB_SECRET_KEY: ${LINKHUB_SECRET_KEY:-please-change-me-in-prod}
+      LINKHUB_DATABASE_URL: sqlite+aiosqlite:////app/data/linkhub.db
+    volumes:
+      - linkhub-data:/app/data
+      # 串口设备透传（Linux）：插拔 USB 后容器内可见
+      - /dev:/dev
+    privileged: true  # 访问串口所需；也可改为 device_cgroup_rules 精细化
+    restart: unless-stopped
+
+  frontend:
+    build: ../frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  linkhub-data:

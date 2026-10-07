@@ -1,0 +1,26 @@
+key: orange_pi_5
+name: 香橙派 5
+category: 开发板
+icon: 🍊
+description: |
+  Orange Pi 5（瑞芯微 RK3588S）。
+  ⚠️ 瑞芯微平台调试串口默认波特率是 1500000（不是 115200），
+  且部分廉价 USB-TTL 线（CH340）不支持该波特率，建议用 CP2102/FT232。
+spec:
+  soc: Rockchip RK3588S (Cortex-A76×4 + A55×4)
+  ram: [4GB, 8GB, 16GB, 32GB]
+  gpio_pinout: { uart_tx_pin: 8, uart_rx_pin: 10, gnd_pin: 6 }
+  notes:
+    - 波特率 1500000 8N1（瑞芯微平台特殊值）
+    - USB-TTL 适配器必须支持 1500000（CH340 不行，CP2102/FT232 可以）
+default_connections:
+  - kind: serial
+    name: UART 调试串口
+    params:
+      port: /dev/ttyUSB0
+      baudrate: 1500000
+      bytesize: 8
+      parity: N
+      stopbits: 1
+      local_echo: false
+      auto_reconnect: true

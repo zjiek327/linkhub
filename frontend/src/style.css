@@ -1,0 +1,9 @@
+html, body, #app { height: 100%; margin: 0; }
+body { font-family: 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+
+.page { padding: 16px 20px; }
+.toolbar { display: flex; gap: 12px; margin-bottom: 14px; align-items: center; }
+
+.logo { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; color: #fff; padding: 0 20px; height: 60px; }
+.logo .oct { font-size: 26px; }
+.logo small { font-weight: 400; opacity: .7; font-size: 12px; }
