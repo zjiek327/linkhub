@@ -190,7 +190,7 @@ def test_batch_exec_cross_node(cluster):
 
 
 def test_node_offline_grays_devices(cluster):
-    """最后执行：杀掉 B → A 应把 B 标离线，其设备 node_online=false。"""
+    """最后执行：杀掉 B → A 应把 B 标离线；重启 B → 自动恢复在线（重启恢复回归）。"""
     b_id = _node_id(B)
     cluster["proc_b"].terminate()
     cluster["proc_b"].wait(timeout=5)
@@ -207,3 +207,19 @@ def test_node_offline_grays_devices(cluster):
     # 离线节点代理请求返回 503
     r = httpx.post(f"{A}/api/cluster/proxy/{b_id}/open", json={"connection_id": 1})
     assert r.status_code == 503
+
+    # 重启 B：心跳恢复后应自动回到 online，设备目录重新同步
+    tmp = tempfile.mkdtemp(prefix="linkhub-restart-")
+    pb = _start_node(PORT_B, "节点B", str(tmp_path_or_db(tmp)))
+    _wait_health(B)
+
+    def back_online():
+        nodes = {n["node_id"]: n for n in httpx.get(f"{A}/api/cluster/nodes").json()}
+        return nodes.get(b_id, {}).get("status") == "online"
+    _wait_until(back_online, timeout=15)
+    pb.terminate()
+    pb.wait(timeout=5)
+
+
+def tmp_path_or_db(tmp: str) -> str:
+    return os.path.join(tmp, "b.db")

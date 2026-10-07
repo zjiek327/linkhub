@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     node_name: str = ""                        # 默认取主机名
     advertise_addr: str = "http://127.0.0.1:8000"  # 其他节点回连本节点用的地址
     cluster_mdns: bool = True                  # mDNS 自动发现（C2）
+    discovery_beacon: bool = True              # UDP 广播发现（单网段更可靠）
+    discovery_port: int = 37890
     heartbeat_interval: float = 5.0            # 秒
     heartbeat_timeout: float = 15.0            # 秒，超时判离线
     directory_sync_interval: float = 60.0      # 秒，目录反熵对账周期

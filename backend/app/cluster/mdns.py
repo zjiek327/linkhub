@@ -40,7 +40,8 @@ class _Listener(ServiceListener):
             return
         props = {k.decode(): v.decode() for k, v in (info.properties or {}).items()}
         node_id = props.get("node_id")
-        if not node_id or node_id == state.self_id:
+        if (not node_id or node_id == state.self_id
+                or node_id in state.peers or node_id in state.dismissed):
             return
         entry = {"node_id": node_id, "name": props.get("name", node_id),
                  "address": props.get("addr", "")}

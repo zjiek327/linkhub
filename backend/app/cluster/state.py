@@ -35,8 +35,10 @@ class ClusterState:
         self.peers: dict[str, PeerState] = {}
         # 远程设备目录缓存: {(node_id, device_id): entry}
         self.directory: dict[tuple[str, int], dict] = {}
-        # mDNS 发现待批准: {node_id: {node_id, name, address}}
+        # mDNS/UDP 发现待批准: {node_id: {node_id, name, address}}
         self.pending: dict[str, dict] = {}
+        # 被用户忽略的发现节点（不再出现在待批准）
+        self.dismissed: set[str] = set()
         self.background_tasks: list[asyncio.Task] = []
         self._started = False
 
@@ -56,6 +58,10 @@ class ClusterState:
         await self._ensure_identity()
         await self._load_peers()
         self._started = True
+        # 重启后恢复 peer 的心跳/事件链路与目录同步（懒加载避免循环导入）
+        from .sync import attach_peer
+        for peer in list(self.peers.values()):
+            await attach_peer(peer)
 
     async def stop(self) -> None:
         for p in self.peers.values():

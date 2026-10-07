@@ -82,6 +82,7 @@ export const api = {
   joinCluster: (address: string, token?: string) => http.post<ClusterNode>('/cluster/join', { address, token: token || undefined }).then(r => r.data),
   leaveCluster: (nodeId: string) => http.post(`/cluster/leave/${nodeId}`),
   discovered: () => http.get<DiscoveredNode[]>('/cluster/discovered').then(r => r.data),
+  dismissNodes: (nodeIds: string[]) => http.post('/cluster/dismiss', { node_ids: nodeIds }),
   proxyDevice: (nodeId: string, deviceId: number) =>
     http.get<{ device: any; connections: Connection[] }>(`/cluster/proxy/${nodeId}/devices/${deviceId}`).then(r => r.data),
   proxyOpen: (nodeId: string, connectionId: number) =>

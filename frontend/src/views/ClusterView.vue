@@ -14,14 +14,25 @@
     </div>
 
     <el-card shadow="never" v-if="pending.length">
-      <template #header>🔍 待批准节点（mDNS 自动发现）</template>
-      <el-table :data="pending">
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span>🔍 发现的节点（自动探测）</span>
+          <div>
+            <el-button size="small" type="primary" :disabled="!pendingSel.length"
+                       @click="joinSelected">加入选中（{{ pendingSel.length }}）</el-button>
+            <el-button size="small" :disabled="!pendingSel.length" @click="ignoreSelected">忽略选中</el-button>
+          </div>
+        </div>
+      </template>
+      <el-table :data="pending" @selection-change="pendingSel = $event">
+        <el-table-column type="selection" width="40" />
         <el-table-column prop="name" label="名称" width="200" />
         <el-table-column prop="node_id" label="节点 ID" width="140" />
         <el-table-column prop="address" label="地址" min-width="220" />
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="180">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="approve(row)">批准加入</el-button>
+            <el-button size="small" type="primary" @click="approve(row)">加入</el-button>
+            <el-button size="small" plain @click="ignore([row.node_id])">忽略</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -88,6 +99,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 const info = ref<ClusterInfo>({ enabled: false, node_id: '', name: '', address: '' })
 const nodes = ref<ClusterNode[]>([])
 const pending = ref<DiscoveredNode[]>([])
+const pendingSel = ref<DiscoveredNode[]>([])
 const loading = ref(false)
 const joinVisible = ref(false)
 const joinForm = reactive({ address: '', token: localStorage.getItem('linkhub_token') ?? '' })
@@ -118,11 +130,32 @@ async function join() {
 async function approve(row: DiscoveredNode) {
   try {
     await api.joinCluster(row.address, joinForm.token || undefined)
-    ElMessage.success(`已批准「${row.name}」加入`)
+    ElMessage.success(`「${row.name}」已加入`)
     load()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail ?? '批准失败')
+    ElMessage.error(e.response?.data?.detail ?? '加入失败')
   }
+}
+
+async function joinSelected() {
+  let ok = 0
+  for (const row of pendingSel.value) {
+    try {
+      await api.joinCluster(row.address, joinForm.token || undefined)
+      ok++
+    } catch { /* 单个失败不阻塞其余 */ }
+  }
+  ElMessage.success(`已加入 ${ok}/${pendingSel.value.length} 个节点`)
+  load()
+}
+
+async function ignore(ids: string[]) {
+  await api.dismissNodes(ids)
+  load()
+}
+async function ignoreSelected() {
+  await ignore(pendingSel.value.map(r => r.node_id))
+  ElMessage.success('已忽略，不再出现在发现列表')
 }
 
 async function leave(nodeId: string) {
@@ -133,4 +166,8 @@ async function leave(nodeId: string) {
 
 useEvents(e => { if (e.event === 'node_status') load() })
 onMounted(load)
+// beacon 每 3s 广播，发现列表 5s 轮询保持新鲜
+import { onUnmounted } from 'vue'
+const timer = window.setInterval(load, 5000)
+onUnmounted(() => clearInterval(timer))
 </script>

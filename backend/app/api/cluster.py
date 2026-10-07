@@ -3,6 +3,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from ..batch_exec import batch_exec_local
@@ -120,9 +121,21 @@ async def leave(node_id: str):
 
 @router.get("/discovered", response_model=list[DiscoveredNode])
 async def discovered():
-    """mDNS 发现但尚未加入的节点。"""
-    known = {state.self_id, *state.peers.keys()}
+    """mDNS/UDP 发现但尚未加入的节点。"""
+    known = {state.self_id, *state.peers.keys(), *state.dismissed}
     return [DiscoveredNode(**e) for nid, e in state.pending.items() if nid not in known]
+
+
+class _DismissBody(BaseModel):
+    node_ids: list[str]
+
+
+@router.post("/dismiss", status_code=204)
+async def dismiss(body: _DismissBody):
+    """忽略发现的节点：移出待批准且不再因 beacon/mDNS 重新出现。"""
+    for nid in body.node_ids:
+        state.pending.pop(nid, None)
+        state.dismissed.add(nid)
 
 
 # ---------- 远程代理 ----------
