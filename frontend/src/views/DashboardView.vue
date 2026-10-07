@@ -30,7 +30,7 @@
         </el-table-column>
         <el-table-column label="操作" width="180">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="$router.push(`/terminal/${row.id}`)">进入终端</el-button>
+            <el-button size="small" type="primary" @click="$router.push(`/terminal/${row.id}?conn=${row.connection_id}`)">进入终端</el-button>
             <el-button size="small" type="danger" plain @click="close(row.id)">关闭</el-button>
           </template>
         </el-table-column>

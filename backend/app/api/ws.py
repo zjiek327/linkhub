@@ -22,6 +22,7 @@ router = APIRouter()
 async def _pipe_session(ws: WebSocket, session_id: int) -> None:
     rt = manager.get(session_id)
     if rt is None:
+        await ws.accept()  # 先 accept 再 close，浏览器才能收到带语义的关闭码
         await ws.close(code=4404, reason="会话不存在或已关闭")
         return
     await ws.accept()
@@ -75,7 +76,7 @@ async def terminal(ws: WebSocket, session_id: int, node: str | None = None):
         await _relay_terminal(ws, session_id, node)
         return
     if manager.get(session_id) is None and not state.enabled:
-        # 单机模式直接 404；集群模式可能是远程会话忘了带 node
+        await ws.accept()
         await ws.close(code=4404, reason="会话不存在或已关闭")
         return
     await _pipe_session(ws, session_id)
@@ -85,6 +86,7 @@ async def _relay_terminal(ws: WebSocket, session_id: int, node_id: str) -> None:
     """浏览器↔本节点↔归属节点 的字节中继。"""
     peer = state.peers.get(node_id)
     if peer is None or peer.status != "online":
+        await ws.accept()
         await ws.close(code=4403, reason=f"节点 {node_id} 不在线")
         return
     await ws.accept()
@@ -112,6 +114,9 @@ async def _relay_terminal(ws: WebSocket, session_id: int, node_id: str) -> None:
                     t.cancel()
                     with contextlib.suppress(asyncio.CancelledError, Exception):
                         await t
+            # 透传关闭语义：对端会话结束 → 前端按"会话终结"处理（重连时会重开会话）
+            with contextlib.suppress(Exception):
+                await ws.close(code=1000, reason="会话已结束")
     except (WebSocketDisconnect, RuntimeError):
         pass
     except Exception as exc:

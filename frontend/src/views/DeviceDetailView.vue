@@ -135,6 +135,7 @@ const sessions = ref<Session[]>([])
 const kinds = ref<ConnectorKind[]>([])
 const clusterEnabled = ref(false)
 const peerNodes = ref<ClusterNode[]>([])
+const selfNodeId = ref('')
 
 const connDialog = ref(false)
 const editing = ref<Connection | null>(null)
@@ -213,18 +214,19 @@ async function openTerminal(row: Connection) {
   try {
     if (isRemote) {
       const r = await api.proxyOpen(remoteNode, row.id)
-      router.push(`/terminal/${r.session_id}?node=${r.node_id}`)
+      router.push(`/terminal/${r.session_id}?node=${r.node_id}&conn=${row.id}`)
     } else {
       const sess = await api.openSession(row.id)
-      const q = sess.node_id && sess.node_id !== 'local' ? `?node=${sess.node_id}` : ''
-      router.push(`/terminal/${sess.id}${q}`)
+      const node = sess.node_id && sess.node_id !== 'local' && sess.node_id !== selfNodeId.value
+        ? `&node=${sess.node_id}` : ''
+      router.push(`/terminal/${sess.id}?conn=${row.id}${node}`)
     }
   } catch (e: any) {
     const detail = e.response?.data?.detail
     // 端口已有活跃会话 → 直接跳转到已打开的终端（可多人旁观同一会话）
     if (e.response?.status === 409 && detail?.session_id) {
       ElMessage.info('已有打开的会话，正在跳转')
-      router.push(`/terminal/${detail.session_id}`)
+      router.push(`/terminal/${detail.session_id}?conn=${row.id}`)
       return
     }
     ElMessage.error(typeof detail === 'string' ? detail : detail?.message ?? '打开会话失败')
@@ -243,6 +245,7 @@ onMounted(async () => {
   kinds.value = await api.connectorKinds()
   const info = await api.clusterInfo()
   clusterEnabled.value = info.enabled
+  selfNodeId.value = info.node_id
   if (info.enabled) {
     const ns = await api.clusterNodes()
     peerNodes.value = ns.filter(n => !n.is_self && n.status === 'online')
