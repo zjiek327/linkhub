@@ -220,7 +220,14 @@ async function openTerminal(row: Connection) {
       router.push(`/terminal/${sess.id}${q}`)
     }
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail ?? '打开会话失败')
+    const detail = e.response?.data?.detail
+    // 端口已有活跃会话 → 直接跳转到已打开的终端（可多人旁观同一会话）
+    if (e.response?.status === 409 && detail?.session_id) {
+      ElMessage.info('已有打开的会话，正在跳转')
+      router.push(`/terminal/${detail.session_id}`)
+      return
+    }
+    ElMessage.error(typeof detail === 'string' ? detail : detail?.message ?? '打开会话失败')
   }
 }
 

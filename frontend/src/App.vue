@@ -11,6 +11,7 @@
         <el-menu-item index="/devices"><el-icon><Cpu /></el-icon>设备管理</el-menu-item>
         <el-menu-item index="/templates"><el-icon><Files /></el-icon>模板库</el-menu-item>
         <el-menu-item index="/cluster"><el-icon><Connection /></el-icon>集群管理</el-menu-item>
+        <el-menu-item index="/settings"><el-icon><Setting /></el-icon>设置</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -26,5 +27,6 @@
 </template>
 
 <script setup lang="ts">
-import { Monitor, Cpu, Files, Connection } from '@element-plus/icons-vue'
+import { Monitor, Cpu, Files, Connection, Setting } from '@element-plus/icons-vue'
+import './api/settings'  // 启动即应用主题（跟随系统/深色/浅色）
 </script>

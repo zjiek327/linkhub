@@ -39,7 +39,7 @@ class SessionRuntime:
 class SessionManager:
     def __init__(self) -> None:
         self._runtimes: dict[int, SessionRuntime] = {}
-        self._port_locks: set[str] = set()  # 同一物理端口只允许一个会话
+        self._port_locks: dict[str, int] = {}  # 端口锁 → 持有会话 ID
 
     # ---------- 查询 ----------
     def get(self, session_id: int) -> SessionRuntime | None:
@@ -75,9 +75,15 @@ class SessionManager:
             connection_id=connection_id or 0,
         )
         self._runtimes[row.id] = rt
-        self._port_locks.add(self._lock_key(kind, params, row.id))
+        self._port_locks[self._lock_key(kind, params, row.id)] = row.id
         rt.task = asyncio.create_task(self._run(rt, params, settings))
         return row
+
+    def _check_lock(self, kind: str, params: dict, fallback) -> None:
+        key = self._lock_key(kind, params, fallback)
+        holder = self._port_locks.get(key)
+        if holder is not None:
+            raise ConnectorError("该端口已有打开的会话", holder_session_id=holder)
 
     async def open(self, connection_id: int, opened_by: str = "admin") -> Session:
         settings = get_settings()
@@ -87,8 +93,7 @@ class SessionManager:
                 raise ConnectorError(f"连接配置 {connection_id} 不存在")
             if not profile.enabled:
                 raise ConnectorError(f"连接配置 {profile.name} 已禁用")
-            if self._lock_key(profile.kind, profile.params, connection_id) in self._port_locks:
-                raise ConnectorError("该端口已被其他会话占用，请先关闭对应会话")
+            self._check_lock(profile.kind, profile.params, connection_id)
 
             row = Session(connection_id=connection_id, opened_by=opened_by, status="connecting")
             db.add(row)
@@ -101,8 +106,7 @@ class SessionManager:
                           opened_by: str = "admin") -> Session:
         """无持久连接配置的临时会话（集群代开、批量执行等场景）。"""
         settings = get_settings()
-        if self._lock_key(kind, params, id(params)) in self._port_locks:
-            raise ConnectorError("该端口已被其他会话占用，请先关闭对应会话")
+        self._check_lock(kind, params, id(params))
         async with SessionLocal() as db:
             row = Session(connection_id=None, opened_by=opened_by, status="connecting")
             db.add(row)
@@ -215,7 +219,7 @@ class SessionManager:
             "device_online": rt.device_id in self.online_device_ids(),
         })
         lock_key = f"{rt.connector.kind}:{rt.params.get('port', rt.session_id)}"
-        self._port_locks.discard(lock_key)
+        self._port_locks.pop(lock_key, None)
         self._runtimes.pop(rt.session_id, None)
 
     async def _log(self, session_id: int, direction: str, data: bytes) -> None:

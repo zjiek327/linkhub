@@ -24,6 +24,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     async with SessionLocal() as db:
         await sync_builtin_templates(db, settings.builtin_templates_dir)
+        # 会话存活于进程内存，重启后把历史未关闭会话标记关闭（防僵尸"在线"）
+        from datetime import datetime, timezone
+        from sqlalchemy import update
+        from .models import Session
+        await db.execute(update(Session).where(Session.closed_at.is_(None)).values(
+            closed_at=datetime.now(timezone.utc), status="closed",
+            last_error="服务重启，会话终止"))
+        await db.commit()
     # 集群模式：注册本机身份、拉起后台同步与节点发现（mDNS + UDP 广播）
     await state.start()
     if state.enabled:

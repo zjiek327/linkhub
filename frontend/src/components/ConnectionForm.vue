@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, type SerialPort } from '../api'
 
 const props = defineProps<{ schema: any; modelValue: Record<string, any> }>()

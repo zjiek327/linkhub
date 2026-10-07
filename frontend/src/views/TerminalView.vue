@@ -14,12 +14,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api, wsUrl } from '../api'
+import { settings, terminalThemeOf } from '../api/settings'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const route = useRoute()
@@ -34,18 +35,28 @@ let term: Terminal | null = null
 let fit: FitAddon | null = null
 let ws: WebSocket | null = null
 let resizeObserver: ResizeObserver | null = null
+let stopWatch: (() => void) | null = null
 const encoder = new TextEncoder()
 
 onMounted(async () => {
   term = new Terminal({
-    fontFamily: "'JetBrains Mono', 'Cascadia Code', Menlo, monospace",
-    fontSize: 14, cursorBlink: true, convertEol: false,
-    theme: { background: '#0c0c0c' },
+    fontFamily: settings.terminal.fontFamily,
+    fontSize: settings.terminal.fontSize, cursorBlink: true, convertEol: false,
+    theme: terminalThemeOf(),
   })
   fit = new FitAddon()
   term.loadAddon(fit)
   term.open(termEl.value!)
   fit.fit()
+
+  // 设置页改动即时生效
+  stopWatch = watch(() => ({ ...settings.terminal }), () => {
+    if (!term) return
+    term.options.fontFamily = settings.terminal.fontFamily
+    term.options.fontSize = settings.terminal.fontSize
+    term.options.theme = terminalThemeOf()
+    fit?.fit()
+  }, { deep: true })
 
   resizeObserver = new ResizeObserver(() => fit?.fit())
   resizeObserver.observe(termEl.value!)
@@ -80,6 +91,7 @@ async function close() {
 }
 
 onUnmounted(() => {
+  stopWatch?.()
   resizeObserver?.disconnect()
   ws?.close()
   term?.dispose()

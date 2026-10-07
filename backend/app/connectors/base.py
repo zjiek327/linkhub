@@ -4,7 +4,10 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 
 
 class ConnectorError(Exception):
-    pass
+    def __init__(self, message: str, holder_session_id: int | None = None) -> None:
+        super().__init__(message)
+        # 端口冲突时持有该端口的会话 ID，供前端"跳转到已打开的终端"
+        self.holder_session_id = holder_session_id
 
 
 @runtime_checkable

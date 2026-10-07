@@ -114,7 +114,10 @@ async def open_session(conn_id: int, db: AsyncSession = Depends(get_db)):
     try:
         row = await manager.open(conn_id)
     except ConnectorError as exc:
-        raise HTTPException(409, str(exc)) from exc
+        # detail 携带持有端口的会话 ID，前端可直接跳转已打开的终端
+        raise HTTPException(409, detail={
+            "message": str(exc), "session_id": exc.holder_session_id,
+        }) from exc
     out = SessionOut.model_validate(row)
     out.node_id = self_node_id()
     return out
