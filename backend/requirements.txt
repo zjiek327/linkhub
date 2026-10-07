@@ -1,0 +1,21 @@
+# 灵枢 LinkHub 后端依赖（与 pyproject.toml 同步维护）
+# 老版本 pip（<19，不支持 pyproject.toml）可用本文件安装：
+#   pip install -r requirements.txt
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy[asyncio]>=2.0
+aiosqlite>=0.20
+alembic>=1.13
+pydantic>=2.7
+pydantic-settings>=2.3
+pyserial>=3.5
+pyserial-asyncio>=0.6
+pyyaml>=6.0
+cryptography>=42.0
+httpx>=0.27
+websockets>=12.0
+zeroconf>=0.131
+
+# 开发/测试
+pytest>=8.0
+pytest-asyncio>=0.23

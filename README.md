@@ -63,7 +63,8 @@ uvicorn app.main:app --host 0.0.0.0
 ```bash
 # 0. 三台机器都装代码（任选一机生成令牌，三机共用）
 git clone https://github.com/zjiek327/linkhub.git && cd linkhub/backend
-python3 -m venv .venv && source .venv/bin/activate && pip install -e .
+python3 -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip && pip install -e .   # pip<19 兜底：pip install -r requirements.txt
 sudo usermod -aG dialout $USER   # 插板子的机器才需要，重登录生效
 TOKEN=$(openssl rand -hex 32)    # 只生成一次，抄到另外两台
 
@@ -103,7 +104,8 @@ curl -X POST http://192.168.1.12:8000/api/cluster/join \
 # 后端（Python 3.11+）
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install --upgrade pip          # pip<19 不认 pyproject.toml
+pip install -e ".[dev]"            # 老 pip 兜底：pip install -r requirements.txt
 uvicorn app.main:app --reload          # http://127.0.0.1:8000（API 文档 /docs）
 
 # 前端（Node 18+）
