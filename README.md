@@ -98,7 +98,27 @@ curl -X POST http://192.168.1.12:8000/api/cluster/join \
 
 ## 快速开始
 
-### 本地开发
+### 一键脚本（推荐）
+
+```bash
+git clone https://github.com/zjiek327/linkhub.git && cd linkhub
+./linkhub.sh start      # 自动装依赖、拉起后端+前端，打印访问地址
+./linkhub.sh status     # 查看状态；还有 stop / restart / logs
+```
+
+集群模式：把集群配置写进 `backend/.env` 再 `start` 即可，例如：
+
+```bash
+cat > backend/.env <<'EOF'
+LINKHUB_CLUSTER_ENABLED=true
+LINKHUB_CLUSTER_TOKEN=换成全集群统一的令牌
+LINKHUB_NODE_NAME=主机A
+LINKHUB_ADVERTISE_ADDR=http://本机IP:8000
+EOF
+./linkhub.sh start
+```
+
+### 手动（本地开发）
 
 ```bash
 # 后端（Python 3.11+）

@@ -12,3 +12,5 @@ dist/
 # Misc
 .env
 .DS_Store
+.run/
+logs/
