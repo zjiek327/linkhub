@@ -3,9 +3,11 @@ package automation
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"linkhub/internal/cluster"
+	"linkhub/internal/events"
 	"linkhub/internal/models"
 	"linkhub/internal/session"
 	"linkhub/internal/store"
@@ -34,10 +36,11 @@ type Runner struct {
 	store   *store.Store
 	manager *session.Manager
 	cluster *cluster.Cluster
+	bus     *events.Bus
 }
 
-func NewRunner(st *store.Store, mgr *session.Manager, cl *cluster.Cluster) *Runner {
-	return &Runner{store: st, manager: mgr, cluster: cl}
+func NewRunner(st *store.Store, mgr *session.Manager, cl *cluster.Cluster, bus *events.Bus) *Runner {
+	return &Runner{store: st, manager: mgr, cluster: cl, bus: bus}
 }
 
 func (r *Runner) Run(pb *Playbook) map[string]interface{} {
@@ -61,11 +64,15 @@ func (r *Runner) Run(pb *Playbook) map[string]interface{} {
 
 func (r *Runner) runStep(step PlaybookStep, idx int) StepResult {
 	results := []map[string]interface{}{}
+	selfID := ""
+	if r.cluster != nil {
+		selfID = r.cluster.SelfID()
+	}
 	groups := map[string][]int64{}
 	for _, t := range step.Targets {
 		nid, _ := t["node_id"].(string)
 		did, _ := t["device_id"].(float64)
-		if nid == "" || nid == "local" || nid == r.cluster.SelfID() {
+		if nid == "" || nid == "local" || nid == selfID {
 			nid = "local"
 		}
 		groups[nid] = append(groups[nid], int64(did))
@@ -119,6 +126,13 @@ func (r *Runner) execLocal(deviceIDs []int64, command string, waitMs int) []map[
 
 func (r *Runner) execRemote(nodeID string, deviceIDs []int64, command string, waitMs int) []map[string]interface{} {
 	out := []map[string]interface{}{}
+	if r.cluster == nil {
+		for _, did := range deviceIDs {
+			out = append(out, map[string]interface{}{"node_id": nodeID, "device_id": did,
+				"ok": false, "output": "", "error": "集群未启用"})
+		}
+		return out
+	}
 	peer := r.cluster.GetPeer(nodeID)
 	if peer == nil || peer.Status != "online" {
 		for _, did := range deviceIDs {
@@ -127,12 +141,19 @@ func (r *Runner) execRemote(nodeID string, deviceIDs []int64, command string, wa
 		}
 		return out
 	}
-	// TODO: 调 peer 的批量接口（跨节点）
-	for _, did := range deviceIDs {
-		out = append(out, map[string]interface{}{"node_id": nodeID, "device_id": did,
-			"ok": false, "output": "", "error": "跨节点批量执行待中继实现"})
+	// 走对方 internal/batch/exec
+	var result struct {
+		Results []map[string]interface{} `json:"results"`
 	}
-	return out
+	body := map[string]interface{}{"device_ids": deviceIDs, "command": command, "wait_ms": waitMs}
+	if err := r.cluster.PostJSON(peer, "/api/cluster/internal/batch/exec", body, &result); err != nil {
+		for _, did := range deviceIDs {
+			out = append(out, map[string]interface{}{"node_id": nodeID, "device_id": did,
+				"ok": false, "output": "", "error": err.Error()})
+		}
+		return out
+	}
+	return result.Results
 }
 
 func (r *Runner) execOnConn(conn *models.ConnectionProfile, command string, waitMs int, nodeID string, deviceID int64, deviceName string) map[string]interface{} {
@@ -184,32 +205,40 @@ type Scheduler struct {
 	store   *store.Store
 	manager *session.Manager
 	cluster *cluster.Cluster
+	bus     *events.Bus
+	mu      sync.Mutex
 	tasks   map[int64]chan struct{}
 }
 
-func NewScheduler(st *store.Store, mgr *session.Manager, cl *cluster.Cluster) *Scheduler {
-	return &Scheduler{store: st, manager: mgr, cluster: cl, tasks: map[int64]chan struct{}{}}
+func NewScheduler(st *store.Store, mgr *session.Manager, cl *cluster.Cluster, bus *events.Bus) *Scheduler {
+	return &Scheduler{store: st, manager: mgr, cluster: cl, bus: bus, tasks: map[int64]chan struct{}{}}
 }
 
 func (s *Scheduler) Start() {
 	tasks, _ := s.store.ListTasks()
 	for _, t := range tasks {
 		if t.Enabled {
-			s.track(t.ID)
+			s.Track(t.ID)
 		}
 	}
 }
 
-func (s *Scheduler) track(taskID int64) {
+func (s *Scheduler) Track(taskID int64) {
+	s.Untrack(taskID)
 	stop := make(chan struct{})
+	s.mu.Lock()
 	s.tasks[taskID] = stop
+	s.mu.Unlock()
 	go s.loop(taskID, stop)
 }
 
 func (s *Scheduler) Untrack(taskID int64) {
-	if stop, ok := s.tasks[taskID]; ok {
+	s.mu.Lock()
+	stop, ok := s.tasks[taskID]
+	delete(s.tasks, taskID)
+	s.mu.Unlock()
+	if ok {
 		close(stop)
-		delete(s.tasks, taskID)
 	}
 }
 
@@ -248,7 +277,7 @@ func (s *Scheduler) getTask(id int64) (*models.ScheduledTask, error) {
 }
 
 func (s *Scheduler) runOnce(task *models.ScheduledTask) {
-	runner := NewRunner(s.store, s.manager, s.cluster)
+	runner := NewRunner(s.store, s.manager, s.cluster, s.bus)
 	steps := []PlaybookStep{}
 	for _, t := range task.Targets {
 		steps = append(steps, PlaybookStep{
@@ -274,5 +303,10 @@ func (s *Scheduler) runOnce(task *models.ScheduledTask) {
 	task.History = history
 	now := time.Now()
 	task.LastRun = &now
-	// TODO: store update task
+	s.store.UpdateTask(task)
+	if s.bus != nil {
+		s.bus.Publish("task_ran", map[string]interface{}{
+			"task_id": task.ID, "name": task.Name, "ok": resultMap["ok"],
+		})
+	}
 }

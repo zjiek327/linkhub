@@ -46,6 +46,8 @@ type Manager struct {
 	sessions map[int64]*Session
 	portLock map[string]int64 // 端口锁 → 会话 ID
 	store    *store.Store
+	// OnStatus 状态变更钩子（事件总线用），main 里注入
+	OnStatus func(sessionID, deviceID int64, status, errMsg string)
 }
 
 func NewManager(st *store.Store) *Manager {
@@ -120,6 +122,7 @@ func (m *Manager) Close(id int64) error {
 		return fmt.Errorf("会话不存在")
 	}
 	s.cancel()
+	s.Connector.Close() // 尽快释放端口（run 循环退出时还会兜底关一次）
 	m.store.Exec(nil, `UPDATE sessions SET closed_at=CURRENT_TIMESTAMP, status='closed' WHERE id=?`, id)
 	return nil
 }
@@ -151,6 +154,10 @@ func (m *Manager) OnlineSessionIDs() map[int64]bool {
 // ---------- 会话运行循环 ----------
 func (s *Session) run(m *Manager) {
 	delay := time.Second
+	defer func() {
+		// 退出必关连接器，否则串口句柄泄漏（独占打开后无法再用）
+		s.Connector.Close()
+	}()
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -238,6 +245,11 @@ func (s *Session) maybeMask(chunk []byte) {
 func (s *Session) broadcast(data []byte) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	s.broadcastData(data)
+}
+
+// broadcastData 向所有客户端推数据（调用方必须已持有 s.mu 读锁或写锁）
+func (s *Session) broadcastData(data []byte) {
 	for _, c := range s.clients {
 		select {
 		case c.Queue <- data:
@@ -249,6 +261,12 @@ func (s *Session) broadcast(data []byte) {
 func (s *Session) broadcastCtrl(msg map[string]interface{}) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	s.broadcastCtrlLocked(msg)
+}
+
+// broadcastCtrlLocked 控制消息广播（调用方必须已持有 s.mu 读锁或写锁；
+// 注意 RWMutex 不可重入，Subscribe/Control 等持写锁路径必须用 Locked 版本）
+func (s *Session) broadcastCtrlLocked(msg map[string]interface{}) {
 	for _, c := range s.clients {
 		select {
 		case c.Queue <- msg:
@@ -258,7 +276,14 @@ func (s *Session) broadcastCtrl(msg map[string]interface{}) {
 }
 
 func (s *Session) log(m *Manager, dir string, data []byte) {
-	m.store.Exec(nil,
+	st := s.store
+	if st == nil && m != nil {
+		st = m.store
+	}
+	if st == nil {
+		return
+	}
+	st.Exec(nil,
 		`INSERT INTO session_logs (session_id, direction, data) VALUES (?, ?, ?)`,
 		s.ID, dir, base64.StdEncoding.EncodeToString(data))
 }
@@ -272,6 +297,9 @@ func (s *Session) setStatus(m *Manager, status, errMsg string) {
 		"type": "session_status", "session_id": s.ID, "device_id": s.DeviceID,
 		"status": status, "error": errMsg,
 	})
+	if m.OnStatus != nil {
+		m.OnStatus(s.ID, s.DeviceID, status, errMsg)
+	}
 }
 
 // ---------- 写入与协作 ----------
@@ -310,7 +338,7 @@ func (s *Session) Subscribe(clientID, name string) (*Client, bool) {
 		c.Writer = true
 	}
 	s.clients[clientID] = c
-	s.broadcastCtrl(map[string]interface{}{"type": "presence", "viewers": len(s.clients)})
+	s.broadcastCtrlLocked(map[string]interface{}{"type": "presence", "viewers": len(s.clients)})
 	return c, c.Writer
 }
 
@@ -320,9 +348,9 @@ func (s *Session) Unsubscribe(clientID string) {
 	delete(s.clients, clientID)
 	if s.WriterID == clientID {
 		s.WriterID = ""
-		s.broadcastCtrl(map[string]interface{}{"type": "writer_free"})
+		s.broadcastCtrlLocked(map[string]interface{}{"type": "writer_free"})
 	}
-	s.broadcastCtrl(map[string]interface{}{"type": "presence", "viewers": len(s.clients)})
+	s.broadcastCtrlLocked(map[string]interface{}{"type": "presence", "viewers": len(s.clients)})
 }
 
 func (s *Session) Control(clientID string, msg map[string]interface{}) {
@@ -336,9 +364,9 @@ func (s *Session) Control(clientID string, msg map[string]interface{}) {
 			if c, ok := s.clients[clientID]; ok {
 				c.Writer = true
 			}
-			s.broadcastCtrl(map[string]interface{}{"type": "role_change", "writer": clientID, "writer_name": s.clients[clientID].Name})
+			s.broadcastCtrlLocked(map[string]interface{}{"type": "role_change", "writer": clientID, "writer_name": s.clients[clientID].Name})
 		} else {
-			s.broadcastCtrl(map[string]interface{}{"type": "input_request", "from": clientID, "name": msg["name"]})
+			s.broadcastCtrlLocked(map[string]interface{}{"type": "input_request", "from": clientID, "name": msg["name"]})
 		}
 	case "grant_write":
 		if s.WriterID == clientID {
@@ -349,17 +377,17 @@ func (s *Session) Control(clientID string, msg map[string]interface{}) {
 				}
 				c.Writer = true
 				s.WriterID = target
-				s.broadcastCtrl(map[string]interface{}{"type": "role_change", "writer": target, "writer_name": c.Name})
+				s.broadcastCtrlLocked(map[string]interface{}{"type": "role_change", "writer": target, "writer_name": c.Name})
 			}
 		}
 	case "deny_write":
 		if s.WriterID == clientID {
-			s.broadcastCtrl(map[string]interface{}{"type": "input_denied", "to": msg["to"]})
+			s.broadcastCtrlLocked(map[string]interface{}{"type": "input_denied", "to": msg["to"]})
 		}
 	case "release_write":
 		if s.WriterID == clientID {
 			s.WriterID = ""
-			s.broadcastCtrl(map[string]interface{}{"type": "writer_free"})
+			s.broadcastCtrlLocked(map[string]interface{}{"type": "writer_free"})
 		}
 	}
 }

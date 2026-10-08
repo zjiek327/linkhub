@@ -1,16 +1,23 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"linkhub/internal/auth"
+	"linkhub/internal/automation"
+	"linkhub/internal/cluster"
 	"linkhub/internal/connector"
+	"linkhub/internal/events"
 	"linkhub/internal/models"
 	"linkhub/internal/session"
 	"linkhub/internal/store"
@@ -21,10 +28,13 @@ type Handler struct {
 	manager  *session.Manager
 	authMw   *auth.Middleware
 	crypto   *auth.Crypto
+	bus      *events.Bus
+	cluster  *cluster.Cluster // 可为 nil（未启用集群）
+	scheduler *automation.Scheduler
 }
 
-func NewHandler(st *store.Store, mgr *session.Manager, mw *auth.Middleware, crypto *auth.Crypto) *Handler {
-	return &Handler{store: st, manager: mgr, authMw: mw, crypto: crypto}
+func NewHandler(st *store.Store, mgr *session.Manager, mw *auth.Middleware, crypto *auth.Crypto, bus *events.Bus, cl *cluster.Cluster, sched *automation.Scheduler) *Handler {
+	return &Handler{store: st, manager: mgr, authMw: mw, crypto: crypto, bus: bus, cluster: cl, scheduler: sched}
 }
 
 func (h *Handler) Router() http.Handler {
@@ -53,9 +63,11 @@ func (h *Handler) Router() http.Handler {
 			r.Get("/api/sessions", h.listSessions)
 			r.Get("/api/sessions/{id}", h.getSession)
 			r.Get("/api/sessions/{id}/logs", h.sessionLogs)
+			r.Get("/api/sessions/{id}/logs/export", h.exportSessionLogs)
 			r.Get("/api/serial/ports", h.serialPorts)
 			r.Get("/api/connector-kinds", h.connectorKinds)
 			r.Get("/api/stats", h.stats)
+			r.Get("/api/system/interfaces", h.systemInterfaces)
 		})
 
 		// 操作（operator+）
@@ -65,6 +77,7 @@ func (h *Handler) Router() http.Handler {
 			r.Delete("/api/devices/{id}", h.deleteDevice)
 			r.Post("/api/devices/from-template/{key}", h.createFromTemplate)
 			r.Post("/api/groups", h.createGroup)
+			r.Delete("/api/groups/{id}", h.deleteGroup)
 			r.Post("/api/devices/{id}/connections", h.createConnection)
 			r.Put("/api/connections/{id}", h.updateConnection)
 			r.Delete("/api/connections/{id}", h.deleteConnection)
@@ -73,13 +86,22 @@ func (h *Handler) Router() http.Handler {
 			r.Post("/api/serial/test", h.serialTest)
 			r.Post("/api/credentials", h.createCredential)
 			r.Delete("/api/credentials/{id}", h.deleteCredential)
+			// 自动化
+			r.Post("/api/playbook/run", h.playbookRun)
+			r.Get("/api/tasks", h.listTasks)
+			r.Post("/api/tasks", h.createTask)
+			r.Put("/api/tasks/{id}", h.updateTask)
+			r.Delete("/api/tasks/{id}", h.deleteTask)
 		})
 
 		// 管理员
 		r.With(h.authMw.RequireRole(auth.RoleAdmin)).Group(func(r chi.Router) {
 			r.Get("/api/users", h.listUsers)
 			r.Post("/api/users", h.createUser)
+			r.Put("/api/users/{id}", h.updateUser)
 			r.Delete("/api/users/{id}", h.deleteUser)
+			r.Post("/api/templates", h.createTemplate)
+			r.Delete("/api/templates/{key}", h.deleteTemplate)
 			r.Get("/api/audit", h.listAudit)
 		})
 	})
@@ -166,12 +188,55 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	online := h.manager.OnlineDeviceIDs()
+	nodeStatus := h.nodeStatusMap()
 	for i := range devices {
 		devices[i].Online = online[devices[i].ID]
-		devices[i].NodeName = devices[i].NodeID
-		devices[i].NodeOnline = true
+		devices[i].NodeOnline = nodeStatus[devices[i].NodeID]
+		if devices[i].NodeID == "" || devices[i].NodeID == "local" {
+			devices[i].NodeName = "本机"
+		}
 	}
-	jsonOut(w, map[string]interface{}{"total": total, "items": devices})
+	// 聚合远程节点目录（集群模式）
+	items := devices
+	if h.cluster != nil {
+		for _, rd := range h.cluster.RemoteDevices() {
+			if keyword != "" && !strings.Contains(rd.Name, keyword) && !strings.Contains(rd.Description, keyword) {
+				continue
+			}
+			if tag != "" {
+				hit := false
+				for _, t := range rd.Tags {
+					if t == tag {
+						hit = true
+						break
+					}
+				}
+				if !hit {
+					continue
+				}
+			}
+			if gid != nil && (rd.GroupID == nil || *rd.GroupID != *gid) {
+				continue
+			}
+			items = append(items, rd.Device)
+			total++
+		}
+	}
+	jsonOut(w, map[string]interface{}{"total": total, "items": items})
+}
+
+// nodeStatusMap 节点在线状态（含本机）
+func (h *Handler) nodeStatusMap() map[string]bool {
+	out := map[string]bool{"local": true, "": true}
+	if h.cluster != nil {
+		for _, n := range h.cluster.ListNodes() {
+			out[n.NodeID] = n.Status == "online"
+			if n.IsSelf {
+				out["local"] = true
+			}
+		}
+	}
+	return out
 }
 
 func (h *Handler) getDevice(w http.ResponseWriter, r *http.Request) {
@@ -200,6 +265,7 @@ func (h *Handler) createDevice(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, err.Error())
 		return
 	}
+	h.publishDeviceChanged(d.ID)
 	auditLog(h, r, "device_create", d.Name, "")
 	jsonOut(w, d)
 }
@@ -218,6 +284,7 @@ func (h *Handler) updateDevice(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 500, err.Error())
 		return
 	}
+	h.publishDeviceChanged(d.ID)
 	auditLog(h, r, "device_update", d.Name, "")
 	jsonOut(w, d)
 }
@@ -229,15 +296,31 @@ func (h *Handler) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 404, "设备不存在")
 		return
 	}
-	// 关闭其会话
-	conns, _ := h.store.ListConnections(id)
-	for _, c := range conns {
-		_ = c
-	}
-	// TODO: close sessions by connection
-	h.store.DeleteDevice(id)
+	cascadeDeleteDevice(h.store, h.manager, id)
+	h.bus.Publish("device_deleted", map[string]interface{}{"device_id": id})
 	auditLog(h, r, "device_delete", d.Name, "")
 	w.WriteHeader(204)
+}
+
+// publishDeviceChanged 广播设备目录变更（internal/directory 同款结构，供缓存/前端）
+func (h *Handler) publishDeviceChanged(deviceID int64) {
+	d, err := h.store.GetDevice(deviceID)
+	if err != nil || d == nil {
+		return
+	}
+	d.Online = h.manager.OnlineDeviceIDs()[deviceID]
+	conns, _ := h.store.ListConnections(deviceID)
+	rcs := []map[string]interface{}{}
+	for _, c := range conns {
+		rcs = append(rcs, map[string]interface{}{
+			"id": c.ID, "kind": c.Kind, "name": c.Name, "node_id": c.NodeID, "enabled": c.Enabled,
+		})
+	}
+	h.bus.Publish("device_changed", map[string]interface{}{
+		"id": d.ID, "name": d.Name, "description": d.Description, "location": d.Location,
+		"owner": d.Owner, "tags": d.Tags, "group_id": d.GroupID, "node_id": "local",
+		"online": d.Online, "connections": rcs,
+	})
 }
 
 // ---------- 分组 ----------
@@ -260,6 +343,17 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, g)
 }
 
+func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
+	id, _ := paramID(r, "id")
+	// 组内设备移出该组
+	h.store.Exec(nil, `UPDATE devices SET group_id=NULL WHERE group_id=?`, id)
+	if err := h.store.Exec(nil, `DELETE FROM device_groups WHERE id=?`, id); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
 // ---------- 模板 ----------
 func (h *Handler) listTemplates(w http.ResponseWriter, r *http.Request) {
 	t, _ := h.store.ListTemplates()
@@ -273,6 +367,46 @@ func (h *Handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, t)
+}
+
+func (h *Handler) createTemplate(w http.ResponseWriter, r *http.Request) {
+	var t models.Template
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		jsonErr(w, 400, "请求体错误")
+		return
+	}
+	if t.Key == "" {
+		jsonErr(w, 400, "key 不能为空")
+		return
+	}
+	if existing, _ := h.store.GetTemplateByKey(t.Key); existing != nil {
+		jsonErr(w, 409, "模板 key 已存在")
+		return
+	}
+	t.Builtin = false
+	if err := h.store.UpsertTemplate(&t); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "template_create", t.Key, "")
+	out, _ := h.store.GetTemplateByKey(t.Key)
+	jsonOut(w, out)
+}
+
+func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request) {
+	key := chi.URLParam(r, "key")
+	t, _ := h.store.GetTemplateByKey(key)
+	if t == nil {
+		jsonErr(w, 404, "模板不存在")
+		return
+	}
+	if t.Builtin {
+		jsonErr(w, 400, "内置模板不可删除")
+		return
+	}
+	h.store.Exec(nil, `DELETE FROM templates WHERE key=?`, key)
+	auditLog(h, r, "template_delete", key, "")
+	w.WriteHeader(204)
 }
 
 func (h *Handler) createFromTemplate(w http.ResponseWriter, r *http.Request) {
@@ -333,14 +467,34 @@ func (h *Handler) updateConnection(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 404, "连接配置不存在")
 		return
 	}
-	json.NewDecoder(r.Body).Decode(c)
-	// TODO: store update
+	var body models.ConnectionProfile
+	json.NewDecoder(r.Body).Decode(&body)
+	// 只更新可编辑字段（device_id/kind 不变）
+	c.Name = body.Name
+	c.Params = body.Params
+	c.CredentialID = body.CredentialID
+	c.Enabled = body.Enabled
+	c.NodeID = body.NodeID
+	if err := h.store.UpdateConnection(c); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	h.publishDeviceChanged(c.DeviceID)
 	jsonOut(w, c)
 }
 
 func (h *Handler) deleteConnection(w http.ResponseWriter, r *http.Request) {
 	id, _ := paramID(r, "id")
+	c, _ := h.store.GetConnection(id)
+	if c == nil {
+		jsonErr(w, 404, "连接配置不存在")
+		return
+	}
+	for _, sid := range h.store.SessionIDsByConnection(id) {
+		h.manager.Close(sid)
+	}
 	h.store.DeleteConnection(id)
+	h.publishDeviceChanged(c.DeviceID)
 	w.WriteHeader(204)
 }
 
@@ -408,13 +562,58 @@ func (h *Handler) sessionLogs(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 {
 		limit = 500
 	}
+	if limit > 5000 {
+		limit = 5000
+	}
 	logs, _ := h.store.SessionLogs(id, afterID, limit)
 	jsonOut(w, logs)
 }
 
+// exportSessionLogs 整段导出为纯文本（密码行打码），text/plain 附件
+func (h *Handler) exportSessionLogs(w http.ResponseWriter, r *http.Request) {
+	id, _ := paramID(r, "id")
+	s, _ := h.store.GetSession(id)
+	if s == nil {
+		jsonErr(w, 404, "会话不存在")
+		return
+	}
+	logs, err := h.store.AllSessionLogs(id)
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# 灵枢 LinkHub 会话日志 #%d (%s %s)\n", s.ID, s.OpenedBy, s.OpenedAt.Format("2006-01-02 15:04:05"))
+	for _, l := range logs {
+		raw, err := base64.StdEncoding.DecodeString(l.Data)
+		if err != nil {
+			continue
+		}
+		prefix := ""
+		switch l.Direction {
+		case "tx":
+			prefix = "› "
+		case "meta":
+			prefix = "# "
+		}
+		b.WriteString(prefix + string(raw))
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=linkhub-session-%d.log", id))
+	w.Write([]byte(b.String()))
+}
+
 // ---------- 串口 ----------
 func (h *Handler) serialPorts(w http.ResponseWriter, r *http.Request) {
-	jsonOut(w, connector.ListPorts())
+	ports := connector.ListPorts()
+	out := []map[string]interface{}{}
+	for _, p := range ports {
+		out = append(out, map[string]interface{}{
+			"device": p.Device, "description": p.Description, "is_usb": p.IsUSB,
+			"node": "本机", "node_id": "local",
+		})
+	}
+	jsonOut(w, out)
 }
 
 func (h *Handler) serialTest(w http.ResponseWriter, r *http.Request) {
@@ -425,23 +624,41 @@ func (h *Handler) serialTest(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
-	if sc, ok := c.(*connector.SerialConnector); ok {
-		if err := sc.OpenWithParams(body); err != nil {
-			jsonOut(w, map[string]interface{}{"ok": false, "error": err.Error()})
-			return
-		}
-		defer sc.Close()
-		jsonOut(w, map[string]interface{}{"ok": true, "banner": ""})
+	sc, ok := c.(*connector.SerialConnector)
+	if !ok {
+		jsonOut(w, map[string]interface{}{"ok": false, "error": "内部错误"})
+		return
 	}
+	if err := sc.OpenWithParams(body); err != nil {
+		jsonOut(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	defer sc.Close()
+	// 探测 banner：读 probe_ms（默认 800ms）窗口内的数据
+	probe := 800
+	if v, ok := body["probe_ms"].(float64); ok && v >= 100 && v <= 5000 {
+		probe = int(v)
+	}
+	banner := []byte{}
+	if rd, err := sc.Read(); err == nil {
+		buf := make([]byte, 4096)
+		deadline := time.Now().Add(time.Duration(probe) * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if n, err := rd.Read(buf); n > 0 {
+				banner = append(banner, buf[:n]...)
+			} else if err != nil {
+				break
+			} else {
+				time.Sleep(30 * time.Millisecond)
+			}
+		}
+	}
+	jsonOut(w, map[string]interface{}{"ok": true, "banner": string(banner)})
 }
 
 // ---------- 连接器 ----------
 func (h *Handler) connectorKinds(w http.ResponseWriter, r *http.Request) {
-	kinds := []map[string]interface{}{}
-	for _, k := range connector.Kinds() {
-		kinds = append(kinds, map[string]interface{}{"kind": k, "schema": map[string]interface{}{}})
-	}
-	jsonOut(w, kinds)
+	jsonOut(w, connectorKindList())
 }
 
 // ---------- 统计 ----------
@@ -449,12 +666,30 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	devices, total, _ := h.store.ListDevices("", "", nil)
 	online := h.manager.OnlineDeviceIDs()
 	onlineCount := 0
-	for range devices {
-		_ = devices
-	}
-	for id := range online {
-		if id > 0 {
+	for _, d := range devices {
+		if online[d.ID] {
 			onlineCount++
+		}
+	}
+	nodesTotal, nodesOnline := 0, 0
+	if h.cluster != nil {
+		nodes := h.cluster.ListNodes()
+		nodesTotal = len(nodes)
+		for _, n := range nodes {
+			if n.Status == "online" {
+				nodesOnline++
+			}
+		}
+		// 远程目录计入设备总数
+		nodesOnlineOnly := map[string]bool{}
+		for _, n := range h.cluster.ListNodes() {
+			nodesOnlineOnly[n.NodeID] = n.Status == "online"
+		}
+		for _, rd := range h.cluster.RemoteDevices() {
+			total++
+			if rd.Online && nodesOnlineOnly[rd.NodeID] {
+				onlineCount++
+			}
 		}
 	}
 	templates, _ := h.store.ListTemplates()
@@ -462,8 +697,48 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 		"devices_total": total, "devices_online": onlineCount,
 		"sessions_online": len(h.manager.OnlineSessionIDs()),
 		"templates_total": len(templates),
-		"nodes_total": 0, "nodes_online": 0,
+		"nodes_total":     nodesTotal, "nodes_online": nodesOnline,
 	})
+}
+
+// ---------- 系统 ----------
+// systemInterfaces 非 loopback 且 UP 的网卡（IPv4）
+func (h *Handler) systemInterfaces(w http.ResponseWriter, r *http.Request) {
+	out := []map[string]interface{}{}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() {
+				continue
+			}
+			broadcast := ""
+			if ipnet.IP != nil {
+				bc := make(net.IP, 4)
+				for i := range bc {
+					bc[i] = ipnet.IP[i] | ^ipnet.Mask[i]
+				}
+				broadcast = bc.String()
+			}
+			out = append(out, map[string]interface{}{
+				"name": ifc.Name, "ip": ipnet.IP.String(),
+				"netmask": net.IP(ipnet.Mask).String(), "broadcast": broadcast,
+				"is_up": true,
+			})
+		}
+	}
+	jsonOut(w, out)
 }
 
 // ---------- 用户/审计 ----------
@@ -496,6 +771,46 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, u)
 }
 
+func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
+	id, _ := paramID(r, "id")
+	u, err := h.store.GetUser(id)
+	if err != nil || u == nil {
+		jsonErr(w, 404, "用户不存在")
+		return
+	}
+	var body struct {
+		Name     string  `json:"name"`
+		Password *string `json:"password"`
+		Role     *string `json:"role"`
+		Enabled  *bool   `json:"enabled"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Name != "" {
+		u.Name = body.Name
+	}
+	if body.Role != nil {
+		switch *body.Role {
+		case "admin", "operator", "viewer":
+			u.Role = *body.Role
+		default:
+			jsonErr(w, 400, "角色必须是 admin/operator/viewer")
+			return
+		}
+	}
+	if body.Enabled != nil {
+		u.Enabled = *body.Enabled
+	}
+	if body.Password != nil && *body.Password != "" {
+		u.PasswordHash = auth.HashPassword(*body.Password, "")
+	}
+	if err := h.store.UpdateUser(u); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "user_update", u.Name, "")
+	jsonOut(w, u)
+}
+
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	id, _ := paramID(r, "id")
 	u := auth.UserFrom(r.Context())
@@ -503,7 +818,11 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, "不能删除自己")
 		return
 	}
-	// TODO: store delete user
+	if err := h.store.DeleteUser(id); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "user_delete", fmt.Sprintf("#%d", id), "")
 	w.WriteHeader(204)
 }
 
@@ -540,7 +859,115 @@ func (h *Handler) createCredential(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteCredential(w http.ResponseWriter, r *http.Request) {
 	id, _ := paramID(r, "id")
-	// TODO: store delete credential
-	_ = id
+	if err := h.store.DeleteCredential(id); err != nil {
+		jsonErr(w, 409, "删除失败：可能仍被连接配置引用")
+		return
+	}
+	auditLog(h, r, "credential_delete", fmt.Sprintf("#%d", id), "")
+	w.WriteHeader(204)
+}
+
+// ---------- 自动化（playbook / 定时任务） ----------
+func (h *Handler) playbookRun(w http.ResponseWriter, r *http.Request) {
+	var pb automation.Playbook
+	if err := json.NewDecoder(r.Body).Decode(&pb); err != nil {
+		jsonErr(w, 400, "请求体错误")
+		return
+	}
+	runner := automation.NewRunner(h.store, h.manager, h.cluster, h.bus)
+	auditLog(h, r, "playbook_run", pb.Name, "")
+	jsonOut(w, runner.Run(&pb))
+}
+
+func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
+	tasks, _ := h.store.ListTasks()
+	jsonOut(w, tasks)
+}
+
+func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) {
+	var t models.ScheduledTask
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		jsonErr(w, 400, "请求体错误")
+		return
+	}
+	if t.Name == "" || t.Command == "" {
+		jsonErr(w, 400, "name 与 command 必填")
+		return
+	}
+	if t.IntervalS < 30 {
+		t.IntervalS = 30
+	}
+	if t.WaitMs <= 0 {
+		t.WaitMs = 1500
+	}
+	if err := h.store.CreateTask(&t); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	if h.scheduler != nil && t.Enabled {
+		h.scheduler.Track(t.ID)
+	}
+	auditLog(h, r, "task_create", t.Name, "")
+	w.WriteHeader(201)
+	jsonOut(w, t)
+}
+
+func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request) {
+	id, _ := paramID(r, "id")
+	t, err := h.store.GetTask(id)
+	if err != nil || t == nil {
+		jsonErr(w, 404, "任务不存在")
+		return
+	}
+	var body map[string]interface{}
+	json.NewDecoder(r.Body).Decode(&body)
+	if v, ok := body["name"].(string); ok {
+		t.Name = v
+	}
+	if v, ok := body["command"].(string); ok {
+		t.Command = v
+	}
+	if v, ok := body["interval_s"].(float64); ok {
+		t.IntervalS = int(v)
+		if t.IntervalS < 30 {
+			t.IntervalS = 30
+		}
+	}
+	if v, ok := body["wait_ms"].(float64); ok {
+		t.WaitMs = int(v)
+	}
+	if v, ok := body["enabled"].(bool); ok {
+		t.Enabled = v
+	}
+	if v, ok := body["targets"].([]interface{}); ok {
+		b, _ := json.Marshal(v)
+		targets := []map[string]interface{}{}
+		json.Unmarshal(b, &targets)
+		t.Targets = targets
+	}
+	if err := h.store.UpdateTask(t); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	if h.scheduler != nil {
+		h.scheduler.Untrack(t.ID)
+		if t.Enabled {
+			h.scheduler.Track(t.ID)
+		}
+	}
+	auditLog(h, r, "task_update", t.Name, "")
+	jsonOut(w, t)
+}
+
+func (h *Handler) deleteTask(w http.ResponseWriter, r *http.Request) {
+	id, _ := paramID(r, "id")
+	if h.scheduler != nil {
+		h.scheduler.Untrack(id)
+	}
+	if err := h.store.DeleteTask(id); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "task_delete", fmt.Sprintf("#%d", id), "")
 	w.WriteHeader(204)
 }

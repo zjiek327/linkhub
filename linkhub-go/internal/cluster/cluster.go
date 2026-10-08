@@ -27,6 +27,8 @@ type Cluster struct {
 	address  string
 	token    string
 	peers    map[string]*Node
+	pending  map[string]Pending                 // UDP 发现的待加入节点
+	remoteDir map[string]map[int64]RemoteDevice // nodeID → deviceID → 远程设备缓存
 	store    *store.Store
 	client   *http.Client
 	onEvent  func(event string, data map[string]interface{})
@@ -35,7 +37,8 @@ type Cluster struct {
 func NewCluster(st *store.Store, selfID, selfName, address, token string) *Cluster {
 	return &Cluster{
 		selfID: selfID, selfName: selfName, address: address, token: token,
-		peers: map[string]*Node{}, store: st,
+		peers: map[string]*Node{}, pending: map[string]Pending{},
+		remoteDir: map[string]map[int64]RemoteDevice{}, store: st,
 		client: &http.Client{Timeout: 6 * time.Second},
 	}
 }
@@ -87,6 +90,7 @@ func (c *Cluster) Join(address string) (*Node, error) {
 	c.peers[result.NodeID] = n
 	c.mu.Unlock()
 	c.store.UpsertNode(&n.Node)
+	c.noteJoined(result.NodeID)
 	// 启动心跳
 	go c.heartbeatLoop(n)
 	return n, nil
@@ -101,6 +105,7 @@ func (c *Cluster) heartbeatLoop(n *Node) {
 		} else {
 			if n.Status != "online" {
 				c.setStatus(n, "online")
+				go c.syncDirectoryOnce() // 上线即拉目录
 			}
 			n.LastPing = time.Now()
 		}
@@ -153,6 +158,18 @@ func (c *Cluster) GetPeer(nodeID string) *Node {
 	return c.peers[nodeID]
 }
 
+// GetPeerByAddress 按地址找 peer（DirectPeersLoop 用，避免误判导致重复 Join）
+func (c *Cluster) GetPeerByAddress(addr string) *Node {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, p := range c.peers {
+		if p.Address == addr {
+			return p
+		}
+	}
+	return nil
+}
+
 func (c *Cluster) RemovePeer(nodeID string) {
 	c.mu.Lock()
 	delete(c.peers, nodeID)
@@ -165,7 +182,7 @@ func (c *Cluster) DirectPeersLoop(peers []string) {
 	for {
 		time.Sleep(5 * time.Second)
 		for _, addr := range peers {
-			if c.GetPeer(addr) != nil {
+			if c.GetPeerByAddress(addr) != nil {
 				continue
 			}
 			if _, err := c.Join(addr); err != nil {
@@ -203,8 +220,9 @@ func (c *Cluster) BeaconLoop(port int, ifaceBroadcasts []string) {
 		if json.Unmarshal(buf[:n], &card) != nil || card.NodeID == c.selfID {
 			continue
 		}
-		if c.GetPeer(card.NodeID) == nil {
-			// 新节点 → 待批准（事件通知前端）
+		if c.GetPeer(card.NodeID) == nil && !c.IsDismissed(card.NodeID) {
+			// 新节点 → 待加入列表
+			c.AddPending(card.NodeID, card.Name, card.Address)
 			if c.onEvent != nil {
 				c.onEvent("node_discovered", map[string]interface{}{
 					"node_id": card.NodeID, "name": card.Name, "address": card.Address,
