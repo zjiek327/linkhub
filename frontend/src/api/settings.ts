@@ -22,6 +22,7 @@ export const FONT_FAMILIES = [
 
 export interface Settings {
   themeMode: 'system' | 'light' | 'dark'
+  language: 'system' | 'zh' | 'en'
   terminal: {
     fontSize: number
     fontFamily: string
@@ -33,6 +34,7 @@ export interface Settings {
 
 const DEFAULTS: Settings = {
   themeMode: 'system',
+  language: 'system',
   terminal: { fontSize: 14, fontFamily: FONT_FAMILIES[0].value, theme: 'dark', background: '', autoSyncSize: false },
 }
 

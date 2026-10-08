@@ -7,13 +7,13 @@
       </div>
       <el-menu :default-active="$route.path" router background-color="#001529"
                text-color="#a6adb4" active-text-color="#fff">
-        <el-menu-item index="/"><el-icon><Monitor /></el-icon>仪表盘</el-menu-item>
-        <el-menu-item index="/devices"><el-icon><Cpu /></el-icon>设备管理</el-menu-item>
-        <el-menu-item index="/templates"><el-icon><Files /></el-icon>模板库</el-menu-item>
-        <el-menu-item index="/automation"><el-icon><VideoPlay /></el-icon>自动化</el-menu-item>
-        <el-menu-item index="/cluster"><el-icon><Connection /></el-icon>集群管理</el-menu-item>
-        <el-menu-item index="/settings"><el-icon><Setting /></el-icon>设置</el-menu-item>
-        <el-menu-item v-if="me?.role === 'admin'" index="/admin"><el-icon><UserFilled /></el-icon>系统管理</el-menu-item>
+        <el-menu-item index="/"><el-icon><Monitor /></el-icon>{{ $t('menu.dashboard') }}</el-menu-item>
+        <el-menu-item index="/devices"><el-icon><Cpu /></el-icon>{{ $t('menu.devices') }}</el-menu-item>
+        <el-menu-item index="/templates"><el-icon><Files /></el-icon>{{ $t('menu.templates') }}</el-menu-item>
+        <el-menu-item index="/automation"><el-icon><VideoPlay /></el-icon>{{ $t('menu.automation') }}</el-menu-item>
+        <el-menu-item index="/cluster"><el-icon><Connection /></el-icon>{{ $t('menu.cluster') }}</el-menu-item>
+        <el-menu-item index="/settings"><el-icon><Setting /></el-icon>{{ $t('menu.settings') }}</el-menu-item>
+        <el-menu-item v-if="me?.role === 'admin'" index="/admin"><el-icon><UserFilled /></el-icon>{{ $t('menu.admin') }}</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -22,7 +22,7 @@
         <div style="display:flex;align-items:center;gap:12px">
           <el-tag type="success" effect="plain" size="small">🐙 连连在线</el-tag>
           <el-tag size="small" effect="plain">{{ me?.name }} · {{ me?.role }}</el-tag>
-          <el-button size="small" text @click="logout">退出</el-button>
+          <el-button size="small" text @click="logout">{{ $t('menu.logout') }}</el-button>
         </div>
       </el-header>
       <el-main style="padding:0">
@@ -36,12 +36,15 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Monitor, Cpu, Files, Connection, Setting, UserFilled, VideoPlay } from '@element-plus/icons-vue'
 import { api, setToken, type Me } from './api'
+import { settings } from './api/settings'
 import './api/settings'  // 启动即应用主题
 
 const route = useRoute()
 const router = useRouter()
+const { locale } = useI18n()
 const me = ref<Me | null>(null)
 
 async function refreshMe() {
@@ -56,6 +59,8 @@ async function logout() {
 
 onMounted(refreshMe)
 watch(() => route.fullPath, refreshMe)
+// 设置页改语言即时生效
+watch(() => settings.language, v => { locale.value = v === 'system' ? (navigator.language.startsWith('zh') ? 'zh' : 'en') : v })
 </script>
 
 <style scoped>

@@ -6,12 +6,12 @@
       <p class="sub">连连 · 设备连接平台</p>
       <el-form @submit.prevent="login">
         <el-form-item>
-          <el-input v-model="name" placeholder="用户名" size="large" autofocus>
+          <el-input v-model="name" :placeholder="$t('login.username')" size="large" autofocus>
             <template #prefix><el-icon><User /></el-icon></template>
           </el-input>
         </el-form-item>
         <el-form-item>
-          <el-input v-model="password" type="password" placeholder="密码" size="large" show-password
+          <el-input v-model="password" type="password" :placeholder="$t('login.password')" size="large" show-password
                     @keyup.enter="login">
             <template #prefix><el-icon><Lock /></el-icon></template>
           </el-input>
@@ -21,7 +21,7 @@
         </el-button>
       </el-form>
       <el-alert v-if="firstRun" type="warning" :closable="false" style="margin-top:12px">
-        初始账号 admin / admin，登录后请立即修改密码
+        {{ $t('login.firstRunTip') }}
       </el-alert>
     </div>
   </div>
@@ -32,8 +32,10 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 import { api, setToken } from '../api'
 
+const { t: $t } = useI18n()
 const router = useRouter()
 const name = ref('')
 const password = ref('')
@@ -48,7 +50,7 @@ async function login() {
   try {
     const r = await api.login(name.value, password.value)
     setToken(r.token)
-    ElMessage.success(`欢迎，${r.user.name}`)
+    ElMessage.success(`${$t('login.welcome')}，${r.user.name}`)
     router.push('/')
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail ?? '登录失败')
