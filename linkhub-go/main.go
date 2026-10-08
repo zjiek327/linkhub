@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
@@ -46,6 +45,7 @@ func main() {
 	}
 
 	mgr := session.NewManager(st)
+	var clusterRelay *ws.RelayHandler
 	mw := auth.NewMiddleware(st, cfg.SecretKey)
 	crypto := auth.NewCrypto(cfg.SecretKey)
 
@@ -55,7 +55,18 @@ func main() {
 	r := chi.NewRouter()
 	// 直接挂 API 路由（不用 Mount，避免路径前缀问题）
 	r.Mount("/", h.Router())
-	r.Get("/ws/terminal/{session_id}", wsH.Terminal)
+	r.Get("/ws/terminal/{session_id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("node") != "" {
+			// 中继（集群模式才注册 relay，未启用时 404）
+			if clusterRelay != nil {
+				clusterRelay.RelayTerminal(w, r)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		wsH.Terminal(w, r)
+	})
 	r.Get("/ws/events", wsH.Events)
 
 	// 集群（启用时）
@@ -72,6 +83,10 @@ func main() {
 		cl := cluster.NewCluster(st, nodeID, cfg.NodeName, adv, cfg.ClusterToken)
 		ch := api.NewClusterHandler(cl)
 		ch.RegisterRoutes(r)
+		// 终端中继（跨节点）
+		relay := ws.NewRelayHandler(mgr, cl)
+		clusterRelay = relay
+		r.Get("/ws/cluster/relay/{session_id}", relay.PeerRelay)
 		go cl.DirectPeersLoop(cfg.ClusterPeers)
 		if cfg.DiscoveryPort > 0 {
 			go cl.BeaconLoop(cfg.DiscoveryPort, []string{"255.255.255.255"})
@@ -79,20 +94,8 @@ func main() {
 		log.Printf("集群模式: %s @ %s (node_id=%s)", cfg.NodeName, adv, nodeID)
 	}
 
-	// 前端静态托管（embed 或 dist 目录）
-	frontendDir := filepath.Join(cfg.DataDir, "dist")
-	if _, err := os.Stat(frontendDir); os.IsNotExist(err) {
-		frontendDir = "frontend/dist"
-	}
-	if _, err := os.Stat(frontendDir); err == nil {
-		fs := http.FileServer(http.Dir(frontendDir))
-		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/" {
-				r.URL.Path = "/index.html"
-			}
-			fs.ServeHTTP(w, r)
-		})
-	}
+	// 前端静态托管（embed 嵌入二进制，单文件分发）
+	r.Get("/*", func(w http.ResponseWriter, r *http.Request) { api.FrontendHandler().ServeHTTP(w, r) })
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("🐙 灵枢 LinkHub 启动 http://0.0.0.0:%d", cfg.Port)
