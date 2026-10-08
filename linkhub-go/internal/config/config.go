@@ -22,7 +22,8 @@ type Config struct {
 }
 
 func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
+	// TrimSpace 兼容 Windows .env 的 CRLF 行尾（"true\r" 会导致比较失败）
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
 	return def

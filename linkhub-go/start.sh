@@ -20,8 +20,9 @@ pid() { [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" -o pid= 2>/dev/null; }
 
 do_start() {
   if pid; then echo "✓ 已在运行 (pid $(cat "$PID_FILE"))"; exit 0; fi
-  if [ ! -x ./linkhub ]; then
-    echo "未发现 ./linkhub，正在编译..."
+  # 源码比二进制新（如 git pull 之后）则重新编译
+  if [ ! -x ./linkhub ] || [ -n "$(find . -name '*.go' -newer ./linkhub -print -quit 2>/dev/null)" ]; then
+    echo "正在编译 linkhub..."
     go build -o linkhub . || { echo "✗ 编译失败"; exit 1; }
   fi
   mkdir -p .run
