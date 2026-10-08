@@ -8,6 +8,16 @@
     <div class="toolbar">
       <el-button type="primary" :disabled="!info.enabled" @click="joinVisible = true">加入节点</el-button>
       <el-button @click="load">刷新</el-button>
+      <el-radio-group v-model="statusFilter" size="small">
+        <el-radio-button value="online">在线</el-radio-button>
+        <el-radio-button value="offline">离线</el-radio-button>
+        <el-radio-button value="all">全部</el-radio-button>
+      </el-radio-group>
+      <el-popconfirm title="清理所有离线节点？" @confirm="cleanOffline">
+        <template #reference>
+          <el-button size="small" type="danger" plain :disabled="!offlineCount">清理离线（{{ offlineCount }}）</el-button>
+        </template>
+      </el-popconfirm>
       <el-tag v-if="info.enabled" type="success" effect="plain">
         本机：{{ info.name }}（{{ info.node_id }}）
       </el-tag>
@@ -40,7 +50,7 @@
 
     <el-card shadow="never" style="margin-top:14px">
       <template #header>集群节点</template>
-      <el-table :data="nodes" v-loading="loading">
+      <el-table :data="filteredNodes" v-loading="loading">
         <el-table-column label="名称" width="220">
           <template #default="{ row }">
             {{ row.name }}
@@ -90,7 +100,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, type ClusterInfo, type ClusterNode, type DiscoveredNode } from '../api'
 import { useEvents } from '../api/events'
@@ -101,8 +111,16 @@ const nodes = ref<ClusterNode[]>([])
 const pending = ref<DiscoveredNode[]>([])
 const pendingSel = ref<DiscoveredNode[]>([])
 const loading = ref(false)
+const statusFilter = ref<'online' | 'offline' | 'all'>('all')
 const joinVisible = ref(false)
 const joinForm = reactive({ address: '', token: localStorage.getItem('linkhub_token') ?? '' })
+
+const offlineCount = computed(() => nodes.value.filter(n => !n.is_self && n.status !== 'online').length)
+const filteredNodes = computed(() => {
+  if (statusFilter.value === 'all') return nodes.value
+  if (statusFilter.value === 'online') return nodes.value.filter(n => n.is_self || n.status === 'online')
+  return nodes.value.filter(n => !n.is_self && n.status !== 'online')
+})
 
 async function load() {
   loading.value = true
@@ -161,6 +179,16 @@ async function ignoreSelected() {
 async function leave(nodeId: string) {
   await api.leaveCluster(nodeId)
   ElMessage.success('已移除')
+  load()
+}
+
+async function cleanOffline() {
+  const offline = nodes.value.filter(n => !n.is_self && n.status !== 'online')
+  let ok = 0
+  for (const n of offline) {
+    try { await api.leaveCluster(n.node_id); ok++ } catch { /* 单个失败继续 */ }
+  }
+  ElMessage.success(`已清理 ${ok} 个离线节点`)
   load()
 }
 
