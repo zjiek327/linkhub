@@ -68,15 +68,33 @@ class UdpBeacon:
         loop = asyncio.get_running_loop()
         card = json.dumps({"v": 1, "node_id": state.self_id, "name": state.self_name,
                            "address": state.address}, ensure_ascii=False).encode()
-        targets = _broadcast_addrs()
-        log.info("beacon 广播目标: %s", targets)
         while True:
+            targets = await self._targets()
             for target in targets:
                 try:
                     await loop.sock_sendto(sock, card, (target, port))
                 except OSError as exc:
                     log.debug("beacon 发送失败 %s: %s", target, exc)
             await asyncio.sleep(3)
+
+    async def _targets(self) -> list[str]:
+        """广播目标：设置页选中的网卡（空=全部），每轮实时读取。"""
+        from ..database import SessionLocal
+        from ..models import Meta
+
+        selected: set[str] = set()
+        try:
+            async with SessionLocal() as db:
+                row = await db.get(Meta, "beacon_interfaces")
+                if row and row.value:
+                    selected = set(json.loads(row.value))
+        except Exception:
+            pass
+        addrs = _broadcast_addrs()
+        if not selected:
+            return addrs
+        filtered = [a for a in addrs if a in selected]
+        return filtered or ["255.255.255.255"]
 
     async def stop(self) -> None:
         if self._send_task:

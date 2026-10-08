@@ -57,12 +57,41 @@
       </el-form>
       <el-alert type="info" :closable="false">{{ $t('settings.langTip') }}</el-alert>
     </el-card>
+
+    <el-card shadow="never" style="max-width:640px;margin-top:16px">
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span>发现网络</span>
+          <el-button size="small" @click="loadIfaces">刷新网卡</el-button>
+        </div>
+      </template>
+      <el-alert type="info" :closable="false" style="margin-bottom:10px">
+        多网卡服务器可选择从哪些网卡发送节点发现广播（UDP 37890）。默认全部网卡。
+      </el-alert>
+      <el-checkbox-group v-model="beaconIfaces">
+        <div v-for="i in ifaces" :key="i.name + i.ip" class="iface">
+          <el-checkbox :value="i.broadcast">
+            <span class="mono">{{ i.name }}</span>
+            <span class="mono" style="margin-left:10px">{{ i.ip }}</span>
+            <span style="color:var(--el-text-color-secondary);font-size:12px;margin-left:8px">广播 {{ i.broadcast }}</span>
+          </el-checkbox>
+        </div>
+      </el-checkbox-group>
+      <div style="margin-top:10px;color:var(--el-text-color-secondary);font-size:12px">
+        已选 {{ beaconIfaces.length }} / {{ ifaces.length }} 张网卡（全不选 = 全部发送）
+      </div>
+      <el-button type="primary" size="small" style="margin-top:10px" :loading="saving" @click="saveIfaces">
+        保存发现网络
+      </el-button>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { FONT_FAMILIES, TERMINAL_THEMES, settings, terminalThemeOf } from '../api/settings'
+import { http } from '../api'
 
 const previewStyle = computed(() => ({
   background: terminalThemeOf().background,
@@ -70,6 +99,30 @@ const previewStyle = computed(() => ({
   fontFamily: settings.terminal.fontFamily,
   fontSize: settings.terminal.fontSize + 'px',
 }))
+
+// 发现网络（网卡选择）
+const ifaces = ref<any[]>([])
+const beaconIfaces = ref<string[]>([])
+const saving = ref(false)
+
+async function loadIfaces() {
+  try {
+    ifaces.value = await http.get('/system/interfaces').then(r => r.data)
+    const cur = await http.get('/system/beacon-interfaces').then(r => r.data)
+    beaconIfaces.value = cur.interfaces
+  } catch { /* 无权限或后端未启用 */ }
+}
+async function saveIfaces() {
+  saving.value = true
+  try {
+    await http.post('/system/beacon-interfaces', { broadcasts: beaconIfaces.value })
+    ElMessage.success('已保存，下一轮发现广播生效')
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail ?? '保存失败')
+  } finally { saving.value = false }
+}
+
+onMounted(loadIfaces)
 </script>
 
 <style scoped>
@@ -79,4 +132,6 @@ const previewStyle = computed(() => ({
 .theme-item.active { border-color: var(--el-color-primary); }
 .preview { padding: 14px; border-radius: 6px; line-height: 1.6; width: 100%; }
 .hint { font-size: 12px; color: var(--el-text-color-secondary); margin-left: 10px; line-height: 1.4; }
+.iface { padding: 4px 0; }
+.mono { font-family: monospace; }
 </style>

@@ -2,12 +2,12 @@
 from fastapi import APIRouter
 
 from . import (auth_api, automation, cluster, cluster_internal, connections, devices,
-               serial, sessions, templates, ws)
+               serial, sessions, system, templates, ws)
 
 api_router = APIRouter()
 for r in (auth_api.router, automation.router, devices.router, templates.router,
           connections.router, serial.router, sessions.router, cluster.router,
-          cluster_internal.router):
+          cluster_internal.router, system.router):
     api_router.include_router(r)
 
 ws_router = ws.router
