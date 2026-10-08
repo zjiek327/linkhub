@@ -95,7 +95,8 @@ func main() {
 	}
 
 	// 前端静态托管（embed 嵌入二进制，单文件分发）
-	r.Get("/*", func(w http.ResponseWriter, r *http.Request) { api.FrontendHandler().ServeHTTP(w, r) })
+	// 用 NotFound 兜底而非 r.Get("/*")：chi 中 /* 端点会整个吞掉 Mount("/", api) 的子路由
+	r.NotFound(api.FrontendHandler().ServeHTTP)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("🐙 灵枢 LinkHub 启动 http://0.0.0.0:%d", cfg.Port)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -167,8 +168,8 @@ func (c *Cluster) DirectPeersLoop(peers []string) {
 			if c.GetPeer(addr) != nil {
 				continue
 			}
-			if _, err := c.Join(addr); err == nil {
-				// 成功
+			if _, err := c.Join(addr); err != nil {
+				log.Printf("集群定向加入 %s 失败: %v", addr, err)
 			}
 		}
 	}
