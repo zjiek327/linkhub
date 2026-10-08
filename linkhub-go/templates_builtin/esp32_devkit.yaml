@@ -1,0 +1,26 @@
+key: esp32_devkit
+name: ESP32 开发板
+category: 单片机
+icon: 📡
+description: |
+  ESP32 DevKit（乐鑫）。板载 USB 转串口（CP2102 或 CH340），插上即出现 /dev/ttyUSB0。
+  无登录控制台，串口直连 REPL/日志输出（esptool 烧录也走此口）。
+  无回显固件请把 local_echo 打开。
+spec:
+  soc: ESP32 (Xtensa LX6 ×2 @240MHz)
+  ram: [520KB SRAM]
+  notes:
+    - 默认波特率 115200 8N1
+    - 无 login 提示，输出为固件日志/REPL
+    - 按住 BOOT 键再复位可进入烧录模式
+default_connections:
+  - kind: serial
+    name: USB 串口
+    params:
+      port: /dev/ttyUSB0
+      baudrate: 115200
+      bytesize: 8
+      parity: N
+      stopbits: 1
+      local_echo: false
+      auto_reconnect: true

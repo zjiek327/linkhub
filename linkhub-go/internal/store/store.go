@@ -347,7 +347,7 @@ func (s *Store) UpsertTemplate(t *models.Template) error {
 	spec, _ := json.Marshal(t.Spec)
 	dc, _ := json.Marshal(t.DefaultConnections)
 	_, err := s.db.Exec(`INSERT INTO templates (key,name,category,icon,description,spec,default_connections,builtin)
-		VALUES (?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(key) DO UPDATE SET name=excluded.name, category=excluded.category,
 		  icon=excluded.icon, description=excluded.description, spec=excluded.spec,
 		  default_connections=excluded.default_connections, builtin=excluded.builtin`,

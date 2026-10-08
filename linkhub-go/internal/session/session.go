@@ -70,11 +70,15 @@ func (m *Manager) Open(connID int64, kind string, params map[string]interface{},
 	}
 	m.mu.Unlock()
 
-	// 落库
+	// 落库（connection_id 允许 NULL：内联会话/测试）
 	var sessID int64
+	var connIDVal interface{}
+	if connID > 0 {
+		connIDVal = connID
+	}
 	err := m.store.Exec(&sessID,
 		`INSERT INTO sessions (connection_id, opened_by, status, node_id) VALUES (?, ?, 'connecting', 'local')`,
-		connID, openedBy)
+		connIDVal, openedBy)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,25 @@
+key: banana_pi_m4
+name: 香蕉派 BPI-M4
+category: 开发板
+icon: 🍌
+description: |
+  Banana Pi BPI-M4（瑞昱 RTD1395）。调试串口在 40pin 排针旁的 3pin 丝印 TX/RX/GND。
+  与树莓派引脚布局兼容，但 SoC 与外设不同，刷机镜像不可混用。
+spec:
+  soc: Realtek RTD1395 (Cortex-A53 ×4)
+  ram: [1GB, 2GB]
+  gpio_pinout: { uart_tx: "DEBUG TX", uart_rx: "DEBUG RX", gnd: "DEBUG GND" }
+  notes:
+    - 默认波特率 115200 8N1
+    - 部分镜像默认账号 root/bananapi 或 pi/bananapi
+default_connections:
+  - kind: serial
+    name: UART 调试串口
+    params:
+      port: /dev/ttyUSB0
+      baudrate: 115200
+      bytesize: 8
+      parity: N
+      stopbits: 1
+      local_echo: false
+      auto_reconnect: true

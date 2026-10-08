@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,11 +12,18 @@ import (
 
 	"linkhub/internal/api"
 	"linkhub/internal/auth"
+	"linkhub/internal/cluster"
 	"linkhub/internal/config"
 	"linkhub/internal/session"
 	"linkhub/internal/store"
 	"linkhub/internal/ws"
 )
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
 
 func main() {
 	cfg := config.Load()
@@ -50,6 +58,27 @@ func main() {
 	r.Get("/ws/terminal/{session_id}", wsH.Terminal)
 	r.Get("/ws/events", wsH.Events)
 
+	// 集群（启用时）
+	if cfg.ClusterEnabled {
+		nodeID := st.GetMeta("node_id")
+		if nodeID == "" {
+			nodeID = "n-" + randHex(4)
+			st.SetMeta("node_id", nodeID)
+		}
+		adv := cfg.AdvertiseAddr
+		if adv == "" {
+			adv = fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+		}
+		cl := cluster.NewCluster(st, nodeID, cfg.NodeName, adv, cfg.ClusterToken)
+		ch := api.NewClusterHandler(cl)
+		ch.RegisterRoutes(r)
+		go cl.DirectPeersLoop(cfg.ClusterPeers)
+		if cfg.DiscoveryPort > 0 {
+			go cl.BeaconLoop(cfg.DiscoveryPort, []string{"255.255.255.255"})
+		}
+		log.Printf("集群模式: %s @ %s (node_id=%s)", cfg.NodeName, adv, nodeID)
+	}
+
 	// 前端静态托管（embed 或 dist 目录）
 	frontendDir := filepath.Join(cfg.DataDir, "dist")
 	if _, err := os.Stat(frontendDir); os.IsNotExist(err) {
@@ -75,6 +104,9 @@ func main() {
 }
 
 func syncTemplates(st *store.Store) error {
-	// 简化：内置模板从 YAML 读入（后续接模板加载器）
-	return nil
+	count, err := st.SyncBuiltinTemplates("templates_builtin")
+	if err == nil {
+		log.Printf("内置模板同步完成，共 %d 个", count)
+	}
+	return err
 }

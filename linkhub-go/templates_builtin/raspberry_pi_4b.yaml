@@ -1,0 +1,32 @@
+key: raspberry_pi_4b
+name: 树莓派 4B
+category: 开发板
+icon: 🍓
+description: |
+  Raspberry Pi 4B（BCM2711）。P1 主推设备。
+  串口接线：USB-TTL 的 TX→GPIO15(引脚10)、RX→GPIO14(引脚8)、GND→引脚6，VCC 不接。
+  系统需 enable_uart=1 并开启串口登录控制台（raspi-config → Interface Options → Serial Port）。
+  也支持 Type-C 直连（USB Gadget 模式，服务器侧出现 /dev/ttyACM0）：
+  ① config.txt 加 dtoverlay=dwc2；② cmdline.txt 的 rootwait 后加 modules-load=dwc2,g_serial；
+  ③ sudo systemctl enable --now serial-getty@ttyGS0.service；④ 重启。
+  注意用数据线而非充电线；Pi 经此线取电，电脑 USB-A 口可能供电不足。
+spec:
+  soc: BCM2711 (Cortex-A72 ×4 @1.5GHz)
+  ram: [1GB, 2GB, 4GB, 8GB]
+  gpio_pinout: { uart_tx_pin: 8, uart_rx_pin: 10, gnd_pin: 6 }
+  notes:
+    - 默认波特率 115200 8N1（Gadget 模式 ttyACM0 下波特率任意，非真实 UART）
+    - 登录提示词 "raspberrypi login:"，默认账号 pi（新系统需自定义）
+    - config.txt 位置：新系统 /boot/firmware/config.txt，老系统 /boot/config.txt
+    - Type-C 直连不见 ttyACM0 时：检查数据线、Pi 端 g_serial 是否启用、sudo dmesg | grep cdc_acm
+default_connections:
+  - kind: serial
+    name: UART 调试串口
+    params:
+      port: /dev/ttyUSB0    # Windows 填 COM3+，macOS 填 /dev/cu.usbserial-*
+      baudrate: 115200
+      bytesize: 8
+      parity: N
+      stopbits: 1
+      local_echo: false
+      auto_reconnect: true

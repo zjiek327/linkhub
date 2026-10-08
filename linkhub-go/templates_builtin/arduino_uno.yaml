@@ -1,0 +1,24 @@
+key: arduino_uno
+name: Arduino Uno
+category: 单片机
+icon: 🔧
+description: |
+  Arduino Uno（ATmega328P）。板载 USB-Serial，打开串口会触发 DTR 复位，
+  板子会重启一次属正常现象。默认波特率取决于 sketch 里 Serial.begin()，常见 9600/115200。
+spec:
+  soc: ATmega328P @16MHz
+  ram: [2KB SRAM]
+  notes:
+    - 打开串口触发复位（DTR），前两秒输出可能是 bootloader 信息
+    - 波特率以 sketch 中 Serial.begin() 为准，常用 9600/115200
+default_connections:
+  - kind: serial
+    name: USB 串口
+    params:
+      port: /dev/ttyUSB0
+      baudrate: 9600
+      bytesize: 8
+      parity: N
+      stopbits: 1
+      local_echo: false
+      auto_reconnect: true
