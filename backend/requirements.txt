@@ -2,7 +2,7 @@
 # 老版本 pip（<19，不支持 pyproject.toml）可用本文件安装：
 #   pip install -r requirements.txt
 fastapi>=0.115
-uvicorn[standard]>=0.30
+uvicorn>=0.30
 sqlalchemy[asyncio]>=2.0
 aiosqlite>=0.20
 alembic>=1.13
@@ -16,6 +16,11 @@ httpx>=0.27
 websockets>=12.0
 zeroconf>=0.131
 psutil>=5.9
+pyjwt>=2.8
+asyncssh>=2.14
+telnetlib3>=2.0
+aiomqtt>=2.0
+bleak>=0.22
 
 # 开发/测试
 pytest>=8.0

@@ -5,7 +5,7 @@ description = "灵枢 LinkHub — 设备连接平台后端"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
+    "uvicorn>=0.30",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
     "alembic>=1.13",
@@ -19,6 +19,11 @@ dependencies = [
     "websockets>=12.0",
     "zeroconf>=0.131",
     "psutil>=5.9",
+    "pyjwt>=2.8",
+    "asyncssh>=2.14",
+    "telnetlib3>=2.0",
+    "aiomqtt>=2.0",
+    "bleak>=0.22",
 ]
 
 [project.optional-dependencies]

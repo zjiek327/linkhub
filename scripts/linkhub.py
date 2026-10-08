@@ -48,6 +48,20 @@ def venv_python() -> Path:
 
 
 def ensure_venv() -> None:
+    # 32 位 Python 不可行：cryptography/greenlet 等核心依赖没有 win32 预编译 wheel，
+    # 源码编译需要 Visual C++ Build Tools。提前给出明确指引，避免编译报错刷屏。
+    import platform
+    if platform.architecture()[0] == "32bit":
+        print("""✗ 检测到 32 位 Python（i686）
+
+  本项目的核心依赖（cryptography/greenlet）在 32 位 Windows 上没有预编译包，
+  必须换成 64 位 Python。请下载安装 64 位版本：
+
+    https://www.python.org/downloads/windows/
+    选 "Windows installer (64-bit)"
+
+  装好后重开本脚本即可（会自动用新 Python 重建虚拟环境）。""")
+        sys.exit(1)
     py = venv_python()
     if py.exists():
         return
