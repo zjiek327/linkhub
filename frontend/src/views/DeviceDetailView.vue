@@ -155,15 +155,27 @@ function paramsSummary(row: Connection) {
 }
 
 async function load() {
-  if (isRemote) {
-    const r = await api.proxyDevice(remoteNode, deviceId)
-    device.value = { ...r.device, connections: [] }
-    connections.value = r.connections
-  } else {
-    device.value = await api.device(deviceId)
-    connections.value = await api.connections(deviceId)
-    const all = await api.sessions()
-    sessions.value = all.filter(s => connections.value.some(c => c.id === s.connection_id)).slice(0, 20)
+  try {
+    if (isRemote) {
+      const r = await api.proxyDevice(remoteNode, deviceId)
+      device.value = { ...r.device, connections: [] }
+      connections.value = r.connections
+    } else {
+      device.value = await api.device(deviceId)
+      connections.value = await api.connections(deviceId)
+      const all = await api.sessions()
+      sessions.value = all.filter(s => connections.value.some(c => c.id === s.connection_id)).slice(0, 20)
+    }
+  } catch (e: any) {
+    // 节点离线/设备不存在等：停止转圈，显示错误态
+    const msg = e.response?.data?.detail ?? '加载失败'
+    ElMessage.error(msg)
+    device.value = {
+      id: deviceId, name: `设备 #${deviceId}`, description: msg,
+      location: '', owner: '', tags: [], group_id: null, template_id: null,
+      online: false, node_id: remoteNode || 'local', node_name: nodeName.value,
+      node_online: false, connections: [], created_at: '', updated_at: '',
+    } as any
   }
 }
 
