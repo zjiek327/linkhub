@@ -55,14 +55,18 @@ def ensure_venv() -> None:
     subprocess.run([sys.executable, "-m", "venv", str(BACKEND / ".venv")], check=True)
 
 
-def ensure_backend_deps() -> None:
+def ensure_backend_deps(index_url: str = "") -> None:
     py = venv_python()
     marker = RUN_DIR / ".backend-deps"
     req = BACKEND / "requirements.txt"
     if not marker.exists() or marker.stat().st_mtime < req.stat().st_mtime:
         print("🐙 安装后端依赖…")
-        subprocess.run([str(py), "-m", "pip", "install", "--quiet", "--upgrade", "pip"], check=True)
-        subprocess.run([str(py), "-m", "pip", "install", "--quiet", "-r", str(req)], check=True)
+        pip_base = [str(py), "-m", "pip", "install", "--quiet"]
+        if index_url:
+            pip_base += ["-i", index_url]
+        # pip 自身升级失败不阻断（网络/镜像源抽风常见），依赖装不上才退出
+        subprocess.run(pip_base + ["--upgrade", "pip"])
+        subprocess.run(pip_base + ["-r", str(req)], check=True)
         marker.touch()
 
 
@@ -151,7 +155,7 @@ def load_env() -> dict:
 def cmd_start(args) -> None:
     banner()
     ensure_venv()
-    ensure_backend_deps()
+    ensure_backend_deps(args.index_url)
     if not args.no_frontend:
         ensure_frontend_deps()
     env = load_env()
@@ -200,6 +204,8 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--frontend-port", type=int, default=5173)
     ap.add_argument("--no-frontend", action="store_true")
+    ap.add_argument("--index-url", default="",
+                    help="pip 镜像源，如 https://pypi.org/simple 或内网源")
     args = ap.parse_args()
     {"start": cmd_start, "stop": cmd_stop, "status": cmd_status,
      "restart": lambda a: (cmd_stop(a), time.sleep(1), cmd_start(a))}[args.cmd](args)
