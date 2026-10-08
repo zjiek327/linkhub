@@ -17,13 +17,18 @@ class Settings(BaseSettings):
 
     @property
     def db_url(self) -> str:
-        from .platform_utils import sqlite_url
-        return self.database_url or sqlite_url(BASE_DIR / "linkhub.db")
+        from .platform_utils import data_dir, sqlite_url
+        return self.database_url or sqlite_url(data_dir() / "linkhub.db")
+
+    @property
+    def log_dir(self):
+        from .platform_utils import data_dir
+        return data_dir() / "session_logs"
     builtin_templates_dir: Path = BASE_DIR / "templates_builtin"
     # 凭证加密主密钥，生产环境必须通过 LINKHUB_SECRET_KEY 注入
     secret_key: str = "linkhub-dev-secret-change-me"
     # 会话日志落盘目录
-    session_log_dir: Path = BASE_DIR / "session_logs"
+    session_log_dir: Path | None = None   # None=走 data_dir()
     # 串口自动重连
     reconnect_enabled: bool = True
     reconnect_max_delay: float = 30.0  # 秒，指数退避上限

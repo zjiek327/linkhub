@@ -62,6 +62,23 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
     app.include_router(ws_router)
 
+    # 生产/安装包模式：后端直接托管前端构建产物（单端口，免单独前端进程）
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+    from .platform_utils import frontend_dist_dir
+
+    dist = frontend_dist_dir()
+    if dist and dist.is_dir():
+        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def spa_fallback(full_path: str):
+            # 已注册路由优先（FastAPI 先匹配）；其余走 SPA
+            if full_path.startswith(("api/", "ws/")):
+                return None  # 不会走到这：路由已注册过
+            index = dist / "index.html"
+            return FileResponse(index)
+
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "app": settings.app_name, "mascot": "🐙连连"}

@@ -66,3 +66,29 @@ def sqlite_url(path) -> str:
     from pathlib import Path
     p = Path(path).absolute().as_posix()
     return f"sqlite+aiosqlite:///{p}"
+
+
+def data_dir():
+    """用户数据目录：Windows %APPDATA%/LinkHub，其他平台 backend/ 下（开发友好）。
+    可用 LINKHUB_DATA_DIR 覆盖。"""
+    import os
+    from pathlib import Path
+    if v := os.environ.get("LINKHUB_DATA_DIR"):
+        return Path(v)
+    if IS_WINDOWS:
+        return Path(os.environ.get("APPDATA", str(Path.home()))) / "LinkHub"
+    return Path(__file__).resolve().parent.parent  # backend/
+
+
+def frontend_dist_dir():
+    """前端构建产物目录：优先 backend/app/dist（打包内嵌），其次项目 frontend/dist。"""
+    from pathlib import Path
+    here = Path(__file__).resolve().parent
+    candidates = [
+        here / "dist",                        # PyInstaller 内嵌
+        here.parent.parent / "frontend" / "dist",  # 开发态：backend/app/../../frontend/dist
+    ]
+    for c in candidates:
+        if (c / "index.html").is_file():
+            return c
+    return None
