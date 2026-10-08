@@ -69,7 +69,8 @@ func main() {
 	})
 	r.Get("/ws/events", wsH.Events)
 
-	// 集群（启用时）
+	// 集群（启用时创建实例；/api/cluster/info 始终注册，未启用时返回 enabled=false）
+	var cl *cluster.Cluster
 	if cfg.ClusterEnabled {
 		nodeID := st.GetMeta("node_id")
 		if nodeID == "" {
@@ -80,9 +81,7 @@ func main() {
 		if adv == "" {
 			adv = fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
 		}
-		cl := cluster.NewCluster(st, nodeID, cfg.NodeName, adv, cfg.ClusterToken)
-		ch := api.NewClusterHandler(cl)
-		ch.RegisterRoutes(r)
+		cl = cluster.NewCluster(st, nodeID, cfg.NodeName, adv, cfg.ClusterToken)
 		// 终端中继（跨节点）
 		relay := ws.NewRelayHandler(mgr, cl)
 		clusterRelay = relay
@@ -93,6 +92,8 @@ func main() {
 		}
 		log.Printf("集群模式: %s @ %s (node_id=%s)", cfg.NodeName, adv, nodeID)
 	}
+	ch := api.NewClusterHandler(cl, st, cfg.ClusterEnabled, cfg.NodeName, cfg.AdvertiseAddr)
+	ch.RegisterRoutes(r)
 
 	// 前端静态托管（embed 嵌入二进制，单文件分发）
 	// 用 NotFound 兜底而非 r.Get("/*")：chi 中 /* 端点会整个吞掉 Mount("/", api) 的子路由

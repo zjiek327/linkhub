@@ -3,6 +3,9 @@
 # 用法: ./start.sh [start|stop|restart|status]   默认 start
 cd "$(dirname "$0")"
 
+# ---- 本机配置（.env 存在则加载，可用环境变量覆盖）----
+[ -f .env ] && . ./.env
+
 # ---- 配置（可用环境变量覆盖）----
 export LINKHUB_PORT=${LINKHUB_PORT:-8000}
 export LINKHUB_CLUSTER_ENABLED=${LINKHUB_CLUSTER_ENABLED:-true}
