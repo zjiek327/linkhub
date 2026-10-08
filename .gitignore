@@ -14,3 +14,6 @@ dist/
 .DS_Store
 .run/
 logs/
+
+# go:embed 需要前端产物入库（其他 dist 仍忽略）
+!linkhub-go/internal/api/dist/
