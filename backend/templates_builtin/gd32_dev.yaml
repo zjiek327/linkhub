@@ -1,0 +1,28 @@
+key: gd32_dev
+name: GD32 开发板
+category: 单片机
+icon: 🇨🇳
+description: |
+  兆易创新 GD32 系列（国产 ARM Cortex-M / RISC-V 单片机）。
+  串口走 USB-TTL 或板载 GD-Link 调试器的虚拟串口。
+  无登录控制台，输出为固件日志或自定义 shell。
+spec:
+  soc: GD32F103 / GD32F303 / GD32E103 / GD32VF103（RISC-V）等
+  ram: [依型号 20KB~512KB SRAM]
+  notes:
+    - 默认波特率 115200 8N1（多数例程/官方库默认值）
+    - 无 login 提示，输出为固件 printf/日志
+    - GD-Link 虚拟串口：设备管理器/lsusb 显示为 GD32 调试器，免驱
+    - 串口接 USART0（PA9/PA10）居多，注意固件里 printf 重定向到哪个串口
+    - 下载/调试用 GD-Link 或 J-Link，串口仅用于日志/交互
+default_connections:
+  - kind: serial
+    name: UART 调试串口
+    params:
+      port: /dev/ttyUSB0    # Windows 填 COM3+，macOS 填 /dev/cu.usbserial-*
+      baudrate: 115200
+      bytesize: 8
+      parity: N
+      stopbits: 1
+      local_echo: false
+      auto_reconnect: true
