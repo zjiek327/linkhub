@@ -1,4 +1,9 @@
-"""测试公共夹具：临时 SQLite 库 + TestClient（自动跑 lifespan，含模板同步）。"""
+"""测试公共夹具：临时 SQLite 库 + TestClient（自动跑 lifespan，含模板同步）。
+
+平台说明：串口端到端测试依赖 pty（POSIX 专用）。Windows 上整个
+test_serial_session / test_terminal_roles / test_beacon / test_cluster
+模块自动 skip（见各模块的 skipif 标记）；核心 CRUD/RBAC/模板测试全平台可跑。
+"""
 import os
 import tempfile
 
@@ -7,6 +12,14 @@ os.environ["LINKHUB_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP}/test.db"
 os.environ.setdefault("LINKHUB_SECRET_KEY", "test-secret")
 # 测试用独立发现端口，避免广播包污染同机上运行中的真实节点
 os.environ["LINKHUB_DISCOVERY_PORT"] = "37899"
+
+# 非 POSIX 平台没有 pty
+import platform
+import pytest
+
+POSIX_ONLY = pytest.mark.skipif(os.name != "posix",
+                                reason="需要 POSIX pty（当前平台无伪终端）")
+IS_WINDOWS = platform.system() == "Windows"
 
 import pytest
 from starlette.testclient import TestClient

@@ -14,25 +14,7 @@ from .state import state
 log = logging.getLogger("linkhub.cluster.beacon")
 
 
-def _broadcast_addrs() -> list[str]:
-    """所有本地接口的定向广播地址 + 255.255.255.255。
-    多网卡机器上 255.255.255.255 只走默认路由接口，可能到不了目标网段。"""
-    addrs = {"255.255.255.255"}
-    try:
-        import fcntl
-        import struct
-        for _, ifname in socket.if_nameindex():
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                brd = fcntl.ioctl(s.fileno(), 0x8919,  # SIOCGIFBRDADDR
-                                  struct.pack("256s", ifname.encode()))[20:24]
-                s.close()
-                addrs.add(socket.inet_ntoa(brd))
-            except OSError:
-                continue
-    except ImportError:  # 非 Linux（Windows 无 fcntl）
-        pass
-    return sorted(addrs)
+from ..platform_utils import broadcast_addrs as _broadcast_addrs  # noqa: E402
 
 
 class _Protocol(asyncio.DatagramProtocol):

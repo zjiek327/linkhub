@@ -6,7 +6,12 @@ import asyncio
 import json
 import socket
 
+import os
+
 import pytest
+
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='需要 POSIX pty')
+
 
 from app.cluster.state import state
 

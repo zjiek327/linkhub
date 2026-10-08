@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 
 import serial_asyncio
 
+from ..platform_utils import platform_serial_example as _example
 from .base import ConnectorError, register
 
 _PARITY_MAP = {"N": "N", "E": "E", "O": "O", "M": "M", "S": "S"}
@@ -25,7 +26,7 @@ class SerialConnector:
             "type": "object",
             "required": ["port"],
             "properties": {
-                "port": {"type": "string", "title": "串口设备", "default": "/dev/ttyUSB0",
+                "port": {"type": "string", "title": "串口设备", "default": _example(),
                          "description": "如 /dev/ttyUSB0、/dev/ttyACM0、COM3"},
                 "baudrate": {"type": "integer", "title": "波特率", "default": 115200},
                 "bytesize": {"type": "integer", "title": "数据位", "default": 8, "enum": [5, 6, 7, 8]},

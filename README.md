@@ -121,7 +121,7 @@ EOF
 ./linkhub.sh start
 ```
 
-### 手动（本地开发）
+### 手动（本地开发，全平台通用）
 
 ```bash
 # 后端（Python 3.11+）
@@ -154,7 +154,8 @@ LINKHUB_SECRET_KEY=$(openssl rand -hex 32) docker compose up -d --build
 3. **平台侧**：模板库 → 树莓派 4B → 用模板创建 → 选择 `/dev/ttyUSB0` → 打开终端
 4. 浏览器中出现 `raspberrypi login:`，登录，执行 `uname -a` 🎉
 
-> Linux 下访问串口需在 `dialout` 用户组：`sudo usermod -aG dialout $USER`（重新登录生效）
+> 串口权限：Linux 需 `sudo usermod -aG dialout $USER`（重新登录生效）；Windows/macOS 无需配置（macOS 首次可能弹"允许访问串口"系统授权）。
+> 特殊波特率（如香橙派 1500000）**仅 Linux 支持**自定义值；Windows/macOS 上打开会报"不支持的波特率"，请改用标准 115200（在连接配置里改）。
 
 ## 项目结构
 

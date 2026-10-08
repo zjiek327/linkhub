@@ -12,6 +12,9 @@ import time
 
 import httpx
 import pytest
+
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='需要 POSIX pty')
+
 from websockets.sync.client import connect as ws_connect
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

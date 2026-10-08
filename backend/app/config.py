@@ -13,7 +13,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="LINKHUB_", env_file=".env", extra="ignore")
 
     app_name: str = "灵枢 LinkHub"
-    database_url: str = f"sqlite+aiosqlite:///{BASE_DIR / 'linkhub.db'}"
+    database_url: str = ""
+
+    @property
+    def db_url(self) -> str:
+        from .platform_utils import sqlite_url
+        return self.database_url or sqlite_url(BASE_DIR / "linkhub.db")
     builtin_templates_dir: Path = BASE_DIR / "templates_builtin"
     # 凭证加密主密钥，生产环境必须通过 LINKHUB_SECRET_KEY 注入
     secret_key: str = "linkhub-dev-secret-change-me"

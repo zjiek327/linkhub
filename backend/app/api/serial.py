@@ -28,13 +28,15 @@ async def list_serial_ports(include_virtual: bool = False):
     return result
 
 
+from ..platform_utils import is_real_serial
+
+
 def _port_info(p, include_virtual: bool) -> SerialPortInfo | None:
-    is_usb = "USB" in (p.hwid or "").upper() or "ttyACM" in p.device
-    has_info = bool(p.description and p.description != "n/a")
-    if not include_virtual and not (is_usb or has_info):
+    real = is_real_serial(p.device, p.description or "", p.hwid or "")
+    if not include_virtual and not real:
         return None
     return SerialPortInfo(device=p.device, description=p.description or "",
-                          hwid=p.hwid or "", is_usb=is_usb)
+                          hwid=p.hwid or "", is_usb=real)
 
 
 @router.post("/test", response_model=SerialTestOut)

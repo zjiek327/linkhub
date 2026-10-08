@@ -23,7 +23,7 @@ default_connections:
   - kind: serial
     name: UART 调试串口
     params:
-      port: /dev/ttyUSB0
+      port: /dev/ttyUSB0    # Windows 填 COM3+，macOS 填 /dev/cu.usbserial-*
       baudrate: 115200
       bytesize: 8
       parity: N

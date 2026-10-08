@@ -8,6 +8,9 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='需要 POSIX pty')
+
+
 
 @pytest.fixture()
 def pty_pair():
