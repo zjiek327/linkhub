@@ -47,11 +47,52 @@ def venv_python() -> Path:
     return BACKEND / ".venv" / "bin" / "python"
 
 
+def _find_64bit_python() -> str | None:
+    """Windows 上尝试找一个 64 位 Python（py launcher 或常见路径）。"""
+    if not IS_WINDOWS:
+        return None
+    candidates = []
+    # py launcher 列出的 64 位解释器
+    try:
+        out = subprocess.run(["py", "-0p"], capture_output=True, text=True, timeout=10)
+        for line in out.stdout.splitlines():
+            line = line.strip()
+            if "64" in line and "python" in line.lower():
+                parts = line.split()
+                if parts:
+                    candidates.append(parts[-1].strip('"'))
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    # 常见安装路径
+    for p in (r"C:\Python312\python.exe", r"C:\Python311\python.exe",
+              r"C:\Program Files\Python312\python.exe",
+              r"C:\Program Files\Python311\python.exe"):
+        if Path(p).exists():
+            candidates.append(p)
+    for cand in candidates:
+        try:
+            out = subprocess.run([cand, "-c",
+                                  "import platform; print(platform.architecture()[0])"],
+                                 capture_output=True, text=True, timeout=8)
+            if out.stdout.strip() == "64bit":
+                return cand
+        except Exception:
+            continue
+    return None
+
+
 def ensure_venv() -> None:
-    # 32 位 Python 不可行：cryptography/greenlet 等核心依赖没有 win32 预编译 wheel，
-    # 源码编译需要 Visual C++ Build Tools。提前给出明确指引，避免编译报错刷屏。
+    py = venv_python()
+    if py.exists():
+        return
     import platform
     if platform.architecture()[0] == "32bit":
+        # 自动尝试找 64 位 Python 重建 venv
+        alt = _find_64bit_python()
+        if alt:
+            print(f"🐙 检测到 32 位 Python，自动改用 64 位: {alt}")
+            subprocess.run([alt, "-m", "venv", str(BACKEND / ".venv")], check=True)
+            return
         print("""✗ 检测到 32 位 Python（i686）
 
   本项目的核心依赖（cryptography/greenlet）在 32 位 Windows 上没有预编译包，
@@ -62,9 +103,6 @@ def ensure_venv() -> None:
 
   装好后重开本脚本即可（会自动用新 Python 重建虚拟环境）。""")
         sys.exit(1)
-    py = venv_python()
-    if py.exists():
-        return
     print("🐙 创建 Python 虚拟环境…")
     subprocess.run([sys.executable, "-m", "venv", str(BACKEND / ".venv")], check=True)
 
