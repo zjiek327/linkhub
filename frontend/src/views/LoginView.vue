@@ -39,6 +39,8 @@ const name = ref('')
 const password = ref('')
 const loading = ref(false)
 const firstRun = !localStorage.getItem('linkhub_token')
+// 进入登录页即清掉可能失效的旧 token（比如升级前残留的非 JWT 值）
+setToken('')
 
 async function login() {
   if (!name.value || !password.value) return

@@ -14,11 +14,15 @@ http.interceptors.request.use(cfg => {
   if (token) cfg.headers.Authorization = `Bearer ${token}`
   return cfg
 })
-// 401 统一跳登录
+// 401 处理：仅当携带了旧 token 且不在登录页时清理并跳转；
+// 无 token 的匿名 401（登录页的 me 探测）静默忽略，避免登录页刷新循环
 http.interceptors.response.use(r => r, err => {
-  if (err.response?.status === 401 && !location.hash.includes('/login')) {
-    setToken('')
-    location.href = '/#/login'
+  if (err.response?.status === 401) {
+    const onLogin = location.pathname === '/login' || location.hash.includes('/login')
+    if (token && !onLogin) {
+      setToken('')
+      location.href = '/login'
+    }
   }
   return Promise.reject(err)
 })
