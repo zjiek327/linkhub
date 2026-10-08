@@ -70,6 +70,9 @@ async def join(body: JoinIn):
         raise HTTPException(403, f"握手被拒绝：{exc.response.status_code}，检查集群令牌") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"无法连接 {address}: {exc}") from exc
+    except ValueError as exc:
+        # 系统代理等环境配置问题（如 socks:// scheme httpx 不支持）
+        raise HTTPException(502, f"网络环境异常：{exc}（可尝试 unset HTTP_PROXY/HTTPS_PROXY 或联系管理员）") from exc
 
     if resp["node_id"] == state.self_id:
         raise HTTPException(400, "这是本节点自己")
