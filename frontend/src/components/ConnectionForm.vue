@@ -31,11 +31,14 @@ const ports = ref<SerialPort[]>([])
 
 const properties = computed(() => props.schema?.properties ?? {})
 
-// 初始化：用 schema 默认值 + 传入值
+// 初始化：schema 变化（切换连接方式）时整体重建，避免上一种方式的参数残留
 watch(() => props.schema, (s) => {
+  const next: Record<string, any> = {}
   for (const [k, p] of Object.entries<any>(s?.properties ?? {})) {
-    if (!(k in model)) model[k] = props.modelValue?.[k] ?? p.default ?? (p.type === 'integer' ? 115200 : p.type === 'boolean' ? false : '')
+    next[k] = props.modelValue?.[k] ?? p.default ?? (p.type === 'integer' ? 0 : p.type === 'boolean' ? false : '')
   }
+  for (const k of Object.keys(model)) delete model[k]
+  Object.assign(model, next)
 }, { immediate: true })
 watch(() => props.modelValue, v => Object.assign(model, v ?? {}))
 watch(model, v => emit('update:modelValue', { ...v }), { deep: true })

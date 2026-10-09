@@ -219,7 +219,10 @@ function openConnDialog(row?: Connection) {
 }
 
 async function saveConn() {
-  const params = { ...connForm.params, auto_reconnect: connForm.auto_reconnect }
+  // 只保留当前连接方式 schema 里定义的参数，清掉切换方式/历史残留的无关字段
+  const allowed = new Set(Object.keys(currentSchema.value?.properties ?? {}))
+  const filtered = Object.fromEntries(Object.entries(connForm.params ?? {}).filter(([k]) => allowed.has(k)))
+  const params = { ...filtered, auto_reconnect: connForm.auto_reconnect }
   const body = {
     kind: connForm.kind, name: connForm.name, params,
     enabled: editing.value?.enabled ?? true,
