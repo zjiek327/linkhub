@@ -512,19 +512,45 @@ func (h *Handler) deleteConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------- 会话 ----------
-// respondOpenResult 统一处理开会话结果：
+// respondOpen 统一处理开会话结果：
 // PortBusy 不算失败——返回已持有的会话让后来者共享旁观（首连者主写，后来者可申请写入权）
-func respondOpenResult(w http.ResponseWriter, s *session.Session, err error, nodeID string) {
+// fullSession=true 时返回完整会话对象（本地打开，前端读 sess.id）；否则 {session_id, node_id}（内部转发）
+func (h *Handler) respondOpen(w http.ResponseWriter, s *session.Session, err error, nodeID string, fullSession bool) {
+	emitOpen(w, h.store, s, err, nodeID, fullSession)
+}
+
+func emitOpen(w http.ResponseWriter, st *store.Store, s *session.Session, err error, nodeID string, fullSession bool) {
 	if err != nil {
 		var pbe *session.PortBusyError
 		if errors.As(err, &pbe) && s != nil {
-			jsonOut(w, map[string]interface{}{"session_id": s.ID, "node_id": nodeID, "shared": true})
+			emitOpenID(w, st, s.ID, nodeID, fullSession, true)
 			return
 		}
 		jsonErr(w, 409, err.Error())
 		return
 	}
-	jsonOut(w, map[string]interface{}{"session_id": s.ID, "node_id": nodeID})
+	emitOpenID(w, st, s.ID, nodeID, fullSession, false)
+}
+
+func emitOpenID(w http.ResponseWriter, st *store.Store, id int64, nodeID string, fullSession, shared bool) {
+	if !fullSession {
+		jsonOut(w, map[string]interface{}{"session_id": id, "node_id": nodeID})
+		return
+	}
+	row, _ := st.GetSession(id)
+	if row == nil {
+		jsonOut(w, map[string]interface{}{"session_id": id, "node_id": nodeID})
+		return
+	}
+	out := map[string]interface{}{}
+	if b, err := json.Marshal(row); err == nil {
+		json.Unmarshal(b, &out)
+	}
+	out["node_id"] = nodeID
+	if shared {
+		out["shared"] = true
+	}
+	jsonOut(w, out)
 }
 
 func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
@@ -564,7 +590,7 @@ func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, err := h.manager.Open(id, c.Kind, c.Params, c.DeviceID, openedBy)
-	respondOpenResult(w, s, err, "local")
+	h.respondOpen(w, s, err, "local", true)
 }
 
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {

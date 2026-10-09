@@ -52,6 +52,7 @@ export interface Connection {
 export interface Session {
   id: number; connection_id: number; opened_by: string; opened_at: string
   closed_at: string | null; status: string; last_error: string; node_id: string
+  connection_name?: string; device_name?: string
 }
 export interface SerialPort { device: string; description: string; hwid: string; is_usb: boolean; node: string; node_id: string }
 export interface ConnectorKind { kind: string; schema: any }

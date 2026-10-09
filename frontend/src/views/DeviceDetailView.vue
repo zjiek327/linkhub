@@ -247,22 +247,23 @@ async function removeConn(id: number) {
 }
 
 async function openTerminal(row: Connection) {
+  const tabName = encodeURIComponent([device.value?.name, row.name].filter(Boolean).join(' · '))
   try {
     if (isRemote) {
       const r = await api.proxyOpen(remoteNode, row.id)
-      router.push(`/terminal/${r.session_id}?node=${r.node_id}&conn=${row.id}`)
+      router.push(`/terminal/${r.session_id}?node=${r.node_id}&conn=${row.id}&name=${tabName}`)
     } else {
       const sess = await api.openSession(row.id)
       const node = sess.node_id && sess.node_id !== 'local' && sess.node_id !== selfNodeId.value
         ? `&node=${sess.node_id}` : ''
-      router.push(`/terminal/${sess.id}?conn=${row.id}${node}`)
+      router.push(`/terminal/${sess.id}?conn=${row.id}&name=${tabName}${node}`)
     }
   } catch (e: any) {
     const detail = e.response?.data?.detail
     // 端口已有活跃会话 → 直接跳转到已打开的终端（可多人旁观同一会话）
     if (e.response?.status === 409 && detail?.session_id) {
       ElMessage.info('已有打开的会话，正在跳转')
-      router.push(`/terminal/${detail.session_id}?conn=${row.id}`)
+      router.push(`/terminal/${detail.session_id}?conn=${row.id}&name=${tabName}`)
       return
     }
     ElMessage.error(typeof detail === 'string' ? detail : detail?.message ?? '打开会话失败')

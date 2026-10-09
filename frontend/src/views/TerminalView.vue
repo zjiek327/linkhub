@@ -63,9 +63,22 @@ function openTab(payload: { id: number; connId?: number | null; remoteNode?: str
           name: payload.name ?? '', online: true }
     tabs.value.push(t)
   }
+  if (!t.name) enrichName(t)
   activeId.value = String(id)
   save()
   nextTick(() => paneRefs.value[id]?.refit?.())
+}
+
+// 补全 Tab 标题：会话接口 JOIN 出设备名/连接名，显示「设备 · 连接」代替「会话 #N」
+async function enrichName(t: Tab) {
+  try {
+    const s = await api.session(t.id)
+    const label = [s.device_name, s.connection_name].filter(Boolean).join(' · ')
+    if (label) {
+      t.name = t.remoteNode ? `${label} @远端` : label
+      save()
+    }
+  } catch { /* 会话可能已关闭，保留默认标题 */ }
 }
 
 function closeTab(name: string) {

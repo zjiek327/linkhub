@@ -69,6 +69,9 @@ type Session struct {
 	Status       string     `json:"status"`
 	LastError    string     `json:"last_error"`
 	NodeID       string     `json:"node_id"`
+	// JOIN 带出，终端 Tab 标题用
+	ConnectionName string `json:"connection_name,omitempty"`
+	DeviceName     string `json:"device_name,omitempty"`
 }
 
 type SessionLog struct {

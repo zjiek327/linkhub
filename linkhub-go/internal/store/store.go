@@ -418,14 +418,19 @@ func (s *Store) DeleteConnection(id int64) error {
 }
 
 // ---------- 会话 ----------
+const sessionSelect = `SELECT s.id, s.connection_id, s.opened_by, s.opened_at, s.closed_at, s.status, s.last_error, s.node_id, c.name, d.name
+	FROM sessions s
+	LEFT JOIN connection_profiles c ON s.connection_id = c.id
+	LEFT JOIN devices d ON c.device_id = d.id`
+
 func (s *Store) ListSessions(status string) ([]models.Session, error) {
-	q := `SELECT id,connection_id,opened_by,opened_at,closed_at,status,last_error,node_id FROM sessions`
+	q := sessionSelect
 	args := []interface{}{}
 	if status != "" {
-		q += " WHERE status=?"
+		q += " WHERE s.status=?"
 		args = append(args, status)
 	}
-	q += " ORDER BY id DESC"
+	q += " ORDER BY s.id DESC"
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -436,7 +441,8 @@ func (s *Store) ListSessions(status string) ([]models.Session, error) {
 		var ss models.Session
 		var connID sql.NullInt64
 		var closedAt sql.NullTime
-		if err := rows.Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID); err != nil {
+		var connName, devName sql.NullString
+		if err := rows.Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID, &connName, &devName); err != nil {
 			return nil, err
 		}
 		if connID.Valid {
@@ -445,6 +451,7 @@ func (s *Store) ListSessions(status string) ([]models.Session, error) {
 		if closedAt.Valid {
 			ss.ClosedAt = &closedAt.Time
 		}
+		ss.ConnectionName, ss.DeviceName = connName.String, devName.String
 		out = append(out, ss)
 	}
 	return out, nil
@@ -454,8 +461,9 @@ func (s *Store) GetSession(id int64) (*models.Session, error) {
 	var ss models.Session
 	var connID sql.NullInt64
 	var closedAt sql.NullTime
-	err := s.db.QueryRow(`SELECT id,connection_id,opened_by,opened_at,closed_at,status,last_error,node_id FROM sessions WHERE id=?`, id).
-		Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID)
+	var connName, devName sql.NullString
+	err := s.db.QueryRow(sessionSelect+" WHERE s.id=?", id).
+		Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID, &connName, &devName)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -468,6 +476,7 @@ func (s *Store) GetSession(id int64) (*models.Session, error) {
 	if closedAt.Valid {
 		ss.ClosedAt = &closedAt.Time
 	}
+	ss.ConnectionName, ss.DeviceName = connName.String, devName.String
 	return &ss, nil
 }
 
