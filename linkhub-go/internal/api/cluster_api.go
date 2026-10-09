@@ -602,19 +602,58 @@ func cascadeDeleteDevice(st *store.Store, mgr *session.Manager, deviceID int64) 
 	st.DeleteDevice(deviceID)
 }
 
-// connectorKindList 连接器类型与参数 schema
+// connectorKindList 连接器类型与参数 JSON Schema（与 Python 版同构，前端 ConnectionForm 按
+// properties.{key}.type/title/default/enum 动态渲染表单）
 func connectorKindList() []map[string]interface{} {
 	schemas := map[string]map[string]interface{}{
-		"serial": {"port": "string", "baudrate": "int(9600..115200)", "data_bits": "5|6|7|8", "parity": "N|E|O", "stop_bits": "1|2", "auto_reconnect": "bool"},
-		"ssh":    {"host": "string", "port": "int(默认22)", "username": "string", "password": "string", "auto_reconnect": "bool"},
-		"telnet": {"host": "string", "port": "int(默认23)", "auto_reconnect": "bool"},
-		"mqtt":   {"broker": "string(tcp://host:1883)", "topic_sub": "string(默认#)", "topic_pub": "string", "username": "string", "password": "string"},
+		"serial": {
+			"required": []string{"port"},
+			"properties": map[string]interface{}{
+				"port":     map[string]interface{}{"type": "string", "title": "串口设备", "description": "如 /dev/ttyUSB0、/dev/ttyACM0、COM3"},
+				"baudrate": map[string]interface{}{"type": "integer", "title": "波特率", "default": 115200},
+				"bytesize": map[string]interface{}{"type": "integer", "title": "数据位", "default": 8, "enum": []int{5, 6, 7, 8}},
+				"parity":   map[string]interface{}{"type": "string", "title": "校验", "default": "N", "enum": []string{"N", "E", "O", "M", "S"}},
+				"stopbits": map[string]interface{}{"type": "integer", "title": "停止位", "default": 1, "enum": []int{1, 2}},
+				"local_echo": map[string]interface{}{"type": "boolean", "title": "本地回显", "default": false,
+					"description": "对无回显设备（如裸串口）开启"},
+			},
+		},
+		"ssh": {
+			"required": []string{"host"},
+			"properties": map[string]interface{}{
+				"host":     map[string]interface{}{"type": "string", "title": "主机", "description": "设备 IP 或主机名"},
+				"port":     map[string]interface{}{"type": "integer", "title": "端口", "default": 22},
+				"username": map[string]interface{}{"type": "string", "title": "用户名", "default": "root"},
+				"password": map[string]interface{}{"type": "string", "title": "密码", "default": "", "description": "SSH 密码认证"},
+			},
+		},
+		"telnet": {
+			"required": []string{"host"},
+			"properties": map[string]interface{}{
+				"host": map[string]interface{}{"type": "string", "title": "主机", "default": ""},
+				"port": map[string]interface{}{"type": "integer", "title": "端口", "default": 23},
+				"connect_timeout": map[string]interface{}{"type": "integer", "title": "连接超时(秒)", "default": 10},
+			},
+		},
+		"mqtt": {
+			"required": []string{"host"},
+			"properties": map[string]interface{}{
+				"host":     map[string]interface{}{"type": "string", "title": "Broker 主机", "default": ""},
+				"port":     map[string]interface{}{"type": "integer", "title": "端口", "default": 1883},
+				"username": map[string]interface{}{"type": "string", "title": "用户名", "default": ""},
+				"password": map[string]interface{}{"type": "string", "title": "密码", "default": ""},
+				"topic_sub": map[string]interface{}{"type": "string", "title": "订阅主题", "default": "#",
+					"description": "终端里显示这些主题的消息"},
+				"topic_pub": map[string]interface{}{"type": "string", "title": "发布主题", "default": "cmd",
+					"description": "终端里输入的行发布到该主题"},
+			},
+		},
 	}
 	out := []map[string]interface{}{}
 	for _, k := range connector.Kinds() {
 		schema, ok := schemas[k]
 		if !ok {
-			schema = map[string]interface{}{}
+			schema = map[string]interface{}{"properties": map[string]interface{}{}}
 		}
 		out = append(out, map[string]interface{}{"kind": k, "schema": schema})
 	}

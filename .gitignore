@@ -17,3 +17,7 @@ logs/
 
 # go:embed 需要前端产物入库（其他 dist 仍忽略）
 !linkhub-go/internal/api/dist/
+
+# Go 编译产物（勿提交，各机器自行 go build 或用 start 脚本自动编译）
+linkhub-go/linkhub
+linkhub-go/linkhub.exe

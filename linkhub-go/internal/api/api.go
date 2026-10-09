@@ -527,6 +527,25 @@ func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 	if u != nil {
 		openedBy = u.Name
 	}
+	// 连接归属远程节点（"端口所在节点"选择）→ 经 internal/open 在对端打开
+	if h.cluster != nil && c.NodeID != "" && c.NodeID != "local" && c.NodeID != h.cluster.SelfID() {
+		p := h.cluster.GetPeer(c.NodeID)
+		if p == nil || p.Status != "online" {
+			jsonErr(w, 503, "节点不在线")
+			return
+		}
+		var out struct {
+			SessionID int64  `json:"session_id"`
+			NodeID    string `json:"node_id"`
+		}
+		if err := h.cluster.PostJSON(p, "/api/cluster/internal/open",
+			map[string]interface{}{"connection_id": c.ID}, &out); err != nil {
+			jsonErr(w, 409, err.Error())
+			return
+		}
+		jsonOut(w, out)
+		return
+	}
 	s, err := h.manager.Open(id, c.Kind, c.Params, c.DeviceID, openedBy)
 	if err != nil {
 		jsonErr(w, 409, err.Error())
