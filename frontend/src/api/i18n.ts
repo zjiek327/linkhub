@@ -37,6 +37,9 @@ const zh = {
     denied: '主控拒绝了你的输入申请', released: '已释放控制，其他人可申请输入',
     closeSession: '关闭会话', reconnecting: '重连失败', reconnected: '已重新打开会话',
     disconnected: '连接已断开', reconnectToRecover: '点「↻ 重连」恢复',
+    chatTitle: '会话聊天', chatPlaceholder: '发送消息，所有人可见…', chatEmpty: '暂无消息，打个招呼吧',
+    send: '发送', chatTip: '本终端会话内的协作聊天（多端可见，仅会话内有效）',
+    sessionClosed: '会话已被关闭，点「↻ 重连」重新打开',
   },
   settings: {
     appearance: '外观', themeMode: '主题模式', system: '跟随系统', light: '浅色', dark: '深色',
@@ -100,6 +103,9 @@ const en: typeof zh = {
     denied: 'Master denied your input request', released: 'Released. Others may request input',
     closeSession: 'Close Session', reconnecting: 'Reconnect failed', reconnected: 'Reopened session',
     disconnected: 'Disconnected', reconnectToRecover: 'click "↻ Reconnect" to recover',
+    chatTitle: 'Session Chat', chatPlaceholder: 'Message everyone in this session…', chatEmpty: 'No messages yet. Say hi!',
+    send: 'Send', chatTip: 'Collaboration chat inside this terminal session (visible to all, session-scoped)',
+    sessionClosed: 'Session closed. Click "↻ Reconnect" to reopen',
   },
   settings: {
     appearance: 'Appearance', themeMode: 'Theme', system: 'System', light: 'Light', dark: 'Dark',

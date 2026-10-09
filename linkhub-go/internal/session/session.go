@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ type Session struct {
 
 	mu       sync.RWMutex
 	clients  map[string]*Client
+	chats    []map[string]interface{} // 会话内聊天记录（仅内存，随会话消失）
 	closing  bool
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -359,6 +361,13 @@ func (s *Session) Subscribe(clientID, name string) (*Client, bool) {
 		c.Writer = true
 	}
 	s.clients[clientID] = c
+	// 补发会话聊天历史（新加入的旁观者能看到之前聊了什么）
+	for _, m := range s.chats {
+		select {
+		case c.Queue <- m:
+		default:
+		}
+	}
 	s.broadcastCtrlLocked(map[string]interface{}{"type": "presence", "viewers": len(s.clients)})
 	return c, c.Writer
 }
@@ -376,6 +385,30 @@ func (s *Session) Unsubscribe(clientID string) {
 
 func (s *Session) Control(clientID string, msg map[string]interface{}) {
 	typ, _ := msg["type"].(string)
+	// chat：会话内协作聊天，广播给所有客户端（写入者+旁观者，本地+中继皆可发）
+	if typ == "chat" {
+		text, _ := msg["text"].(string)
+		text = strings.TrimSpace(text)
+		if text == "" || len(text) > 500 {
+			return
+		}
+		s.mu.Lock()
+		name := "?"
+		if c, ok := s.clients[clientID]; ok && c.Name != "" {
+			name = c.Name
+		}
+		out := map[string]interface{}{
+			"type": "chat", "from": clientID, "name": name,
+			"text": text, "ts": time.Now().Format("15:04:05"),
+		}
+		s.chats = append(s.chats, out)
+		if len(s.chats) > 50 {
+			s.chats = s.chats[len(s.chats)-50:]
+		}
+		s.broadcastCtrlLocked(out)
+		s.mu.Unlock()
+		return
+	}
 	// resize：仅写入者可改窗口尺寸，避免旁观者互相拉扯
 	if typ == "resize" {
 		rows, _ := msg["rows"].(float64)

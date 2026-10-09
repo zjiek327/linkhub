@@ -23,11 +23,41 @@
       </el-tooltip>
     </div>
     <div ref="termEl" class="term" />
+
+    <!-- 会话内协作聊天：悬浮可拖动，收起为气泡+未读角标+最新一条预览 -->
+    <div v-if="chatVisible" class="chat-widget" :style="{ left: chatPos.x + 'px', top: chatPos.y + 'px' }">
+      <template v-if="chatOpen">
+        <div class="chat-head" @mousedown.prevent="chatDragStart">
+          <span>💬 {{ $t('terminal.chatTitle') }}</span>
+          <span class="chat-min" title="收起" @click="chatOpen = false">—</span>
+        </div>
+        <div ref="chatListEl" class="chat-body">
+          <div v-for="(m, i) in chatMsgs" :key="i" class="chat-msg" :class="{ me: m.from === cid }">
+            <div class="chat-meta">{{ m.from === cid ? '我' : m.name }} · {{ m.ts }}</div>
+            <div class="chat-text">{{ m.text }}</div>
+          </div>
+          <div v-if="!chatMsgs.length" class="chat-empty">{{ $t('terminal.chatEmpty') }}</div>
+        </div>
+        <div class="chat-input">
+          <el-input v-model="chatDraft" size="small" :placeholder="$t('terminal.chatPlaceholder')"
+                    maxlength="500" @keydown.enter.prevent="sendChat" />
+          <el-button size="small" type="primary" @click="sendChat">{{ $t('terminal.send') }}</el-button>
+        </div>
+      </template>
+      <template v-else>
+        <div class="chat-bubble" :title="$t('terminal.chatTip')" @mousedown.prevent="chatDragStart" @click="chatClick">
+          💬<span v-if="chatUnread" class="chat-badge">{{ chatUnread > 9 ? '9+' : chatUnread }}</span>
+        </div>
+        <div v-if="lastChat" class="chat-preview" @click="chatClick">
+          <b>{{ lastChat.from === cid ? '我' : lastChat.name }}:</b> {{ lastChat.text }}
+        </div>
+      </template>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElButton, ElMessage, ElNotification } from 'element-plus'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -71,6 +101,57 @@ const cid = (() => {
   return v
 })()
 const myName = '用户-' + cid.replace(/^cid-/, '').slice(0, 6)
+
+// ---------- 会话内聊天 ----------
+const chatVisible = ref(true)
+const chatOpen = ref(false)
+const chatUnread = ref(0)
+const chatDraft = ref('')
+const chatMsgs = ref<{ from: string; name: string; text: string; ts: string }[]>([])
+const chatListEl = ref<HTMLElement | null>(null)
+const chatPos = ref({ x: 0, y: 0 })
+const lastChat = computed(() => chatMsgs.value.at(-1) ?? null)
+
+function openChat() { chatOpen.value = true; chatUnread.value = 0; scrollChat() }
+let chatDragMoved = false
+function chatClick() { if (!chatDragMoved) openChat(); chatDragMoved = false }
+function scrollChat() { nextTick(() => { if (chatListEl.value) chatListEl.value.scrollTop = chatListEl.value.scrollHeight }) }
+function sendChat() {
+  const text = chatDraft.value.trim()
+  if (!text) return
+  sendCtrl({ type: 'chat', text })
+  chatDraft.value = ''
+}
+function chatDragStart(ev: MouseEvent) {
+  const el = (ev.currentTarget as HTMLElement).parentElement!
+  const startX = ev.clientX - chatPos.value.x
+  const startY = ev.clientY - chatPos.value.y
+  chatDragMoved = false
+  const move = (e: MouseEvent) => {
+    if (Math.abs(e.clientX - ev.clientX) + Math.abs(e.clientY - ev.clientY) > 4) chatDragMoved = true
+    const w = el.parentElement?.clientWidth ?? window.innerWidth
+    const h = el.parentElement?.clientHeight ?? window.innerHeight
+    chatPos.value = {
+      x: Math.min(Math.max(0, e.clientX - startX), Math.max(0, w - el.offsetWidth)),
+      y: Math.min(Math.max(0, e.clientY - startY), Math.max(0, h - 40)),
+    }
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    sessionStorage.setItem('linkhub_chat_pos', JSON.stringify(chatPos.value))
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
+function resetChat() {
+  chatMsgs.value = []
+  chatUnread.value = 0
+  chatOpen.value = false
+  chatDraft.value = ''
+  const saved = sessionStorage.getItem('linkhub_chat_pos')
+  chatPos.value = saved ? JSON.parse(saved) : { x: 0, y: 0 }
+}
 const amWriter = ref(true)
 const viewers = ref(1)
 
@@ -165,6 +246,12 @@ function handleCtrl(msg: Record<string, any>) {
       }
       break
     }
+    case 'chat': {
+      chatMsgs.value.push({ from: msg.from, name: msg.name, text: msg.text, ts: msg.ts })
+      if (!chatOpen.value) chatUnread.value++
+      scrollChat()
+      break
+    }
     case 'input_denied': if (msg.to === cid) ElMessage.warning(t('terminal.denied')); break
     case 'input_blocked': ElMessage.warning(t('terminal.viewOnlyHint')); break
     case 'writer_free': if (!amWriter.value) ElMessage.info(t('terminal.writerFree')); break
@@ -251,11 +338,18 @@ async function close() {
 
 onMounted(async () => {
   try { selfNodeId = (await api.clusterInfo()).node_id } catch { /* 单机 */ }
+  resetChat()
+  if (!sessionStorage.getItem('linkhub_chat_pos')) {
+    nextTick(() => {
+      const el = termEl.value
+      if (el) chatPos.value = { x: Math.max(8, el.clientWidth - 270), y: Math.max(8, el.clientHeight - 330) }
+    })
+  }
   initTerm(); connectWs(); loadStatus()
 })
 
 watch(() => props.sessionId, (n, o) => {
-  if (n && n !== o) { initTerm(); connectWs(); loadStatus() }
+  if (n && n !== o) { resetChat(); initTerm(); connectWs(); loadStatus() }
 })
 
 onUnmounted(() => {
@@ -272,4 +366,30 @@ onUnmounted(() => {
 .bar .title { font-weight: 600; }
 .bar .err { color: #f56c6c; font-size: 12px; }
 .term { flex: 1; padding: 6px; overflow: hidden; }
+/* ---------- 会话聊天 ---------- */
+.pane { position: relative; }
+.chat-widget { position: absolute; z-index: 30; width: 270px; }
+.chat-bubble { width: 46px; height: 46px; border-radius: 50%; background: #1f6feb; color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.55); user-select: none; }
+.chat-bubble:hover { background: #388bfd; }
+.chat-badge { position: absolute; top: -5px; right: -5px; background: #f56c6c; color: #fff;
+  font-size: 11px; line-height: 18px; border-radius: 9px; padding: 0 5px; font-weight: 600; }
+.chat-preview { position: absolute; left: 54px; top: 4px; background: #161616; color: #cfd3d6;
+  border: 1px solid #333; border-radius: 8px; padding: 5px 9px; font-size: 12px; max-width: 230px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.chat-head { background: #1f6feb; color: #fff; padding: 6px 10px; font-size: 12px; cursor: move;
+  display: flex; justify-content: space-between; align-items: center; user-select: none;
+  border-radius: 8px 8px 0 0; }
+.chat-min { cursor: pointer; padding: 0 4px; opacity: .85; }
+.chat-min:hover { opacity: 1; }
+.chat-body { background: rgba(22,22,22,.96); height: 210px; overflow-y: auto; padding: 8px; }
+.chat-msg { margin-bottom: 6px; }
+.chat-msg.me { text-align: right; }
+.chat-meta { font-size: 10px; color: #8a8f99; margin-bottom: 1px; }
+.chat-text { font-size: 12px; color: #e8e8e8; background: #2a2a2a; display: inline-block;
+  padding: 4px 9px; border-radius: 7px; max-width: 85%; word-break: break-word; text-align: left; }
+.chat-msg.me .chat-text { background: #1f6feb; }
+.chat-empty { color: #666; font-size: 12px; text-align: center; padding-top: 80px; }
+.chat-input { display: flex; gap: 6px; padding: 6px; background: #161616; border-radius: 0 0 8px 8px; }
 </style>
