@@ -67,7 +67,7 @@ const cid = (() => {
   if (!v) { v = 'cid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12); sessionStorage.setItem('linkhub_cid', v) }
   return v
 })()
-const myName = '用户-' + cid.slice(0, 4)
+const myName = '用户-' + cid.replace(/^cid-/, '').slice(0, 6)
 const amWriter = ref(true)
 const viewers = ref(1)
 

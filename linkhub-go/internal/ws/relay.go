@@ -2,9 +2,11 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -91,18 +93,25 @@ func (h *RelayHandler) PeerRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.Close(websocket.StatusNormalClosure, "")
-	// 简化为纯数据转发（协作控制在归属节点的 Session 里做）
-	// 订阅会话并把数据泵给 peer
-	// 客户端 ID 必须每次唯一：同一会话可有多个浏览器经中继旁观，
-	// 固定 ID 会让 Subscribe 复用同一队列、双方画面互相串流
-	relayCID := fmt.Sprintf("relay-%s-%d", sid, time.Now().UnixNano())
-	client, isWriter := sess.Subscribe(relayCID, "中继")
+	// 直接用浏览器端 cid 作为会话客户端 ID：协作协议（role/input_request/grant_write）
+	// 全部以 cid 为目标标识，中继保持同一 cid 才能让申请/授权流程透明穿透。
+	// cid 由发起方 URL 带来（RelayTerminal 原样转发 query），浏览器标签页内唯一不会冲突；
+	// 无 cid 时（对端旧版本）退化为唯一中继 ID
+	relayCID := r.URL.Query().Get("cid")
+	name := r.URL.Query().Get("name")
+	if relayCID == "" {
+		relayCID = fmt.Sprintf("relay-%s-%d", sid, time.Now().UnixNano())
+	}
+	if name == "" {
+		name = "远端用户"
+	}
+	client, isWriter := sess.Subscribe(relayCID, name)
 	defer sess.Unsubscribe(relayCID)
+	_ = isWriter
 	// 角色快照（对齐本地终端协议）
 	c.Write(r.Context(), websocket.MessageText, []byte(jsonCtrl(map[string]interface{}{
 		"type": "role", "writer": sess.WriterID, "me": relayCID,
 	})))
-	_ = isWriter
 	go func() {
 		for item := range client.Queue {
 			if data, ok := item.([]byte); ok {
@@ -117,8 +126,18 @@ func (h *RelayHandler) PeerRelay(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		sess.Write("", data)
-		_ = typ
+		// 控制帧（申请/授权写入权等）交给会话协作逻辑，不能当设备数据写出去
+		if typ == websocket.MessageText && strings.HasPrefix(string(data), `{"lh":`) {
+			var body struct {
+				LH map[string]interface{} `json:"lh"`
+			}
+			if json.Unmarshal(data, &body) == nil && body.LH != nil {
+				sess.Control(relayCID, body.LH)
+				continue
+			}
+		}
+		// 按 cid 写入：非写入者会被会话拒绝（前端收到 input_blocked）
+		sess.Write(relayCID, data)
 	}
 }
 
