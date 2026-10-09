@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -511,6 +512,21 @@ func (h *Handler) deleteConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------- 会话 ----------
+// respondOpenResult 统一处理开会话结果：
+// PortBusy 不算失败——返回已持有的会话让后来者共享旁观（首连者主写，后来者可申请写入权）
+func respondOpenResult(w http.ResponseWriter, s *session.Session, err error, nodeID string) {
+	if err != nil {
+		var pbe *session.PortBusyError
+		if errors.As(err, &pbe) && s != nil {
+			jsonOut(w, map[string]interface{}{"session_id": s.ID, "node_id": nodeID, "shared": true})
+			return
+		}
+		jsonErr(w, 409, err.Error())
+		return
+	}
+	jsonOut(w, map[string]interface{}{"session_id": s.ID, "node_id": nodeID})
+}
+
 func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 	id, _ := paramID(r, "id")
 	c, _ := h.store.GetConnection(id)
@@ -548,11 +564,7 @@ func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, err := h.manager.Open(id, c.Kind, c.Params, c.DeviceID, openedBy)
-	if err != nil {
-		jsonErr(w, 409, err.Error())
-		return
-	}
-	jsonOut(w, map[string]interface{}{"session_id": s.ID, "node_id": "local"})
+	respondOpenResult(w, s, err, "local")
 }
 
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {

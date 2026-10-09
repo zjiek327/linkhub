@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -92,11 +93,14 @@ func (h *RelayHandler) PeerRelay(w http.ResponseWriter, r *http.Request) {
 	defer c.Close(websocket.StatusNormalClosure, "")
 	// 简化为纯数据转发（协作控制在归属节点的 Session 里做）
 	// 订阅会话并把数据泵给 peer
-	client, isWriter := sess.Subscribe("relay-"+sid, "中继")
-	defer sess.Unsubscribe("relay-" + sid)
+	// 客户端 ID 必须每次唯一：同一会话可有多个浏览器经中继旁观，
+	// 固定 ID 会让 Subscribe 复用同一队列、双方画面互相串流
+	relayCID := fmt.Sprintf("relay-%s-%d", sid, time.Now().UnixNano())
+	client, isWriter := sess.Subscribe(relayCID, "中继")
+	defer sess.Unsubscribe(relayCID)
 	// 角色快照（对齐本地终端协议）
 	c.Write(r.Context(), websocket.MessageText, []byte(jsonCtrl(map[string]interface{}{
-		"type": "role", "writer": sess.WriterID, "me": "relay-" + sid,
+		"type": "role", "writer": sess.WriterID, "me": relayCID,
 	})))
 	_ = isWriter
 	go func() {

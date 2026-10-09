@@ -413,20 +413,12 @@ func (h *ClusterHandler) internalOpen(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s, err := h.manager.Open(c.ID, c.Kind, c.Params, c.DeviceID, "cluster")
-		if err != nil {
-			jsonErr(w, 409, err.Error())
-			return
-		}
-		jsonOut(w, map[string]interface{}{"session_id": s.ID, "node_id": h.cluster.SelfID()})
+		respondOpenResult(w, s, err, h.cluster.SelfID())
 		return
 	}
 	// 内联参数打开（无落库连接配置）
 	s, err := h.manager.Open(0, body.Kind, body.Params, body.DeviceID, "cluster")
-	if err != nil {
-		jsonErr(w, 409, err.Error())
-		return
-	}
-	jsonOut(w, map[string]interface{}{"session_id": s.ID, "node_id": h.cluster.SelfID()})
+	respondOpenResult(w, s, err, h.cluster.SelfID())
 }
 
 func (h *ClusterHandler) internalCloseSession(w http.ResponseWriter, r *http.Request) {

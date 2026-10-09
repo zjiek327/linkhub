@@ -62,13 +62,22 @@ func (m *Manager) lockKey(kind string, params map[string]interface{}) string {
 	return kind + ":" + port
 }
 
+// PortBusyError 端口已有活跃会话：携带持有会话 ID，调用方应让后来者加入该会话（共享旁观）
+type PortBusyError struct {
+	Message string
+	Holder  int64
+}
+
+func (e *PortBusyError) Error() string { return e.Message }
+
 // Open 打开会话（或返回端口占用冲突）
 func (m *Manager) Open(connID int64, kind string, params map[string]interface{}, deviceID int64, openedBy string) (*Session, error) {
 	m.mu.Lock()
 	key := m.lockKey(kind, params)
 	if holder, ok := m.portLock[key]; ok {
+		s := m.sessions[holder]
 		m.mu.Unlock()
-		return m.sessions[holder], fmt.Errorf("端口已被会话 %d 占用", holder)
+		return s, &PortBusyError{Message: fmt.Sprintf("端口已被会话 %d 占用", holder), Holder: holder}
 	}
 	m.mu.Unlock()
 
