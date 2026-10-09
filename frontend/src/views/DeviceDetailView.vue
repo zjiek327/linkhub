@@ -87,14 +87,20 @@
     </template>
 
     <el-dialog v-model="connDialog" :title="editing ? '编辑连接' : '新增连接'" width="560px">
-      <el-form label-width="110px">
+      <el-form label-width="126px">
         <el-form-item label="连接方式">
           <el-select v-model="connForm.kind" style="width:100%" :disabled="!!editing">
             <el-option v-for="k in kinds" :key="k.kind" :label="kindLabel(k.kind)" :value="k.kind" />
           </el-select>
         </el-form-item>
         <el-form-item label="名称"><el-input v-model="connForm.name" /></el-form-item>
-        <el-form-item v-if="clusterEnabled" label="端口所在节点">
+        <el-form-item v-if="clusterEnabled">
+          <template #label>
+            {{ connNodeLabel }}
+            <el-tooltip :content="connNodeHelp" placement="top" effect="dark">
+              <el-icon style="vertical-align:-2px;margin-left:2px;cursor:help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </template>
           <el-select v-model="connForm.node_id" style="width:100%">
             <el-option label="本机" value="" />
             <el-option v-for="n in peerNodes" :key="n.node_id" :label="n.name" :value="n.node_id" />
@@ -118,6 +124,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, type ClusterNode, type Connection, type ConnectorKind, type Device, type Session } from '../api'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { useEvents } from '../api/events'
 import StatusBadge from '../components/StatusBadge.vue'
 import ConnectionForm from '../components/ConnectionForm.vue'
@@ -142,6 +149,20 @@ const editing = ref<Connection | null>(null)
 const connForm = reactive({ kind: 'serial', name: '', auto_reconnect: true, node_id: '', params: {} as Record<string, any> })
 
 const currentSchema = computed(() => kinds.value.find(k => k.kind === connForm.kind)?.schema)
+
+// 「所在节点」字段按连接协议取名，问号悬浮给白话说明
+const connNodeLabel = computed(() => ({
+  serial: '串口所在节点',
+  ssh: 'SSH 发起节点',
+  telnet: '连接发起节点',
+  mqtt: '接入节点',
+}[connForm.kind] ?? '连接所在节点'))
+const connNodeHelp = computed(() => ({
+  serial: '串口线实际插在哪台机器上就选哪台。打开终端后，数据经由该节点的物理串口收发；选「本机」即当前节点。',
+  ssh: '由哪个节点向目标设备发起 SSH 登录。设备只在某个内网可达时，选那台机器；选「本机」则由当前节点直接 SSH。',
+  telnet: '由哪个节点向目标设备发起 Telnet 连接。网络不可达时换一台中转节点；选「本机」则由当前节点直连。',
+  mqtt: '由哪个节点连接 MQTT Broker 并收发主题消息；选「本机」即当前节点直接连 Broker。',
+}[connForm.kind] ?? '该连接由哪个节点打开和维护；一般选「本机」，端口/网络只在另一台机器可达时才选它。'))
 
 const fmtTime = (t: string) => (t && !t.startsWith('1970') ? new Date(t).toLocaleString() : '—')
 
