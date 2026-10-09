@@ -18,7 +18,9 @@
       <el-tooltip content="串口无窗口尺寸协商，tmux/vim/htop 显示异常时点这里（注入 stty rows/cols）" placement="bottom">
         <el-button size="small" @click="injectStty">{{ $t('terminal.syncSize') }}</el-button>
       </el-tooltip>
-      <el-button size="small" type="danger" plain :disabled="status === 'closed'" @click="close">{{ $t('terminal.closeSession') }}</el-button>
+      <el-tooltip content="仅写入者或所属节点用户可关闭；旁观者只能观看" placement="bottom">
+        <el-button v-if="amWriter || !remoteNode" size="small" type="danger" plain :disabled="status === 'closed'" @click="close">{{ $t('terminal.closeSession') }}</el-button>
+      </el-tooltip>
     </div>
     <div ref="termEl" class="term" />
   </div>
@@ -60,6 +62,7 @@ let resizeObserver: ResizeObserver | null = null
 let stopWatch: (() => void) | null = null
 let sizeSynced = false
 let sessionDead = false
+let closedAnnounced = false
 const encoder = new TextEncoder()
 
 const cid = (() => {
@@ -165,12 +168,23 @@ function handleCtrl(msg: Record<string, any>) {
     case 'input_denied': if (msg.to === cid) ElMessage.warning(t('terminal.denied')); break
     case 'input_blocked': ElMessage.warning(t('terminal.viewOnlyHint')); break
     case 'writer_free': if (!amWriter.value) ElMessage.info(t('terminal.writerFree')); break
+    case 'session_status':
+      // 会话被关闭（本地或经中继都会收到此控制帧）：立即置死并上屏提示
+      if (msg.status === 'closed' && !sessionDead) {
+        sessionDead = true
+        closedAnnounced = true
+        status.value = 'closed'
+        emit('status', { online: false })
+        term?.write(`\r\n\x1b[33m[会话已被关闭，点「↻ 重连」重新打开]\x1b[0m\r\n`)
+      }
+      break
   }
 }
 
 function connectWs() {
   ws?.close()
   sessionDead = false
+  closedAnnounced = false
   const nodeQ = props.remoteNode ? `&node=${props.remoteNode}` : ''
   ws = new WebSocket(wsUrl(`/ws/terminal/${props.sessionId}?cid=${cid}&name=${myName}${nodeQ}`))
   ws.binaryType = 'arraybuffer'
@@ -189,6 +203,7 @@ function connectWs() {
   ws.onclose = async ev => {
     status.value = 'closed'
     emit('status', { online: false })
+    if (closedAnnounced) return // 关闭提示已由 session_status 控制帧上屏
     if (ev.code === 4404 || (ev.reason || '').includes('会话已结束')) sessionDead = true
     else if (!props.remoteNode) {
       try {

@@ -53,11 +53,17 @@ func (h *Handler) Terminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	// 下行：设备/控制消息 → 浏览器
+	// 下行：设备/控制消息 → 浏览器；会话被关闭 → 带原因断开（前端显示"连接已断开"）
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
+				return
+			case <-sess.Done:
+				c.Write(ctx, websocket.MessageText, []byte(jsonCtrl(map[string]interface{}{
+					"type": "session_status", "session_id": sid, "status": "closed",
+				})))
+				c.Close(websocket.StatusNormalClosure, "会话已结束")
 				return
 			case item, ok := <-client.Queue:
 				if !ok {

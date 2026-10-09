@@ -3,7 +3,9 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -64,6 +66,19 @@ func pipeWS(ctx context.Context, dst, src *websocket.Conn) {
 	for {
 		typ, data, err := src.Read(ctx)
 		if err != nil {
+			// 对端关闭（如"会话已结束"）→ 把关闭码和原因透传给浏览器，
+			// 前端据此显示 [连接已断开：会话已结束]
+			log.Printf("[relay] pipeWS 断开: err=%v code=%d", err, websocket.CloseStatus(err))
+			if cs := websocket.CloseStatus(err); cs != -1 {
+				ce := &websocket.CloseError{}
+				if errors.As(err, &ce) {
+					dst.Close(cs, ce.Reason)
+				} else {
+					dst.Close(cs, "")
+				}
+			} else {
+				dst.Close(websocket.StatusNormalClosure, "")
+			}
 			return
 		}
 		if err := dst.Write(ctx, typ, data); err != nil {
@@ -113,11 +128,24 @@ func (h *RelayHandler) PeerRelay(w http.ResponseWriter, r *http.Request) {
 		"type": "role", "writer": sess.WriterID, "me": relayCID,
 	})))
 	go func() {
-		for item := range client.Queue {
-			if data, ok := item.([]byte); ok {
-				c.Write(r.Context(), websocket.MessageBinary, data)
-			} else if m, ok := item.(map[string]interface{}); ok {
-				c.Write(r.Context(), websocket.MessageText, []byte(jsonCtrl(m)))
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-sess.Done:
+				// 会话被关闭（本端或其他协作端操作）→ 带原因断开中继链路，
+				// 经 RelayTerminal 的 pipeWS 透传到远端浏览器
+				c.Write(r.Context(), websocket.MessageText, []byte(jsonCtrl(map[string]interface{}{
+					"type": "session_status", "session_id": id, "status": "closed",
+				})))
+				c.Close(websocket.StatusNormalClosure, "会话已结束")
+				return
+			case item := <-client.Queue:
+				if data, ok := item.([]byte); ok {
+					c.Write(r.Context(), websocket.MessageBinary, data)
+				} else if m, ok := item.(map[string]interface{}); ok {
+					c.Write(r.Context(), websocket.MessageText, []byte(jsonCtrl(m)))
+				}
 			}
 		}
 	}()

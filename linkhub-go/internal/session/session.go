@@ -31,6 +31,8 @@ type Session struct {
 	Status    string
 	LastError string
 	WriterID  string
+	// Done 会话终止（被关闭）后关闭，WS 处理器据此断开客户端
+	Done chan struct{}
 
 	mu       sync.RWMutex
 	clients  map[string]*Client
@@ -101,7 +103,7 @@ func (m *Manager) Open(connID int64, kind string, params map[string]interface{},
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		ID: sessID, DeviceID: deviceID, ConnID: &connID, Kind: kind, Params: params,
-		Connector: conn, Status: "connecting",
+		Connector: conn, Status: "connecting", Done: make(chan struct{}),
 		clients: map[string]*Client{}, ctx: ctx, cancel: cancel, store: m.store,
 	}
 	m.mu.Lock()
@@ -132,6 +134,16 @@ func (m *Manager) Close(id int64) error {
 	}
 	s.cancel()
 	s.Connector.Close() // 尽快释放端口（run 循环退出时还会兜底关一次）
+	// 通知所有 WS 客户端（本地/中继）：会话已结束，处理器据此断开并带原因
+	s.mu.Lock()
+	if !s.closing {
+		s.closing = true
+		close(s.Done)
+	}
+	s.broadcastCtrlLocked(map[string]interface{}{
+		"type": "session_status", "session_id": s.ID, "device_id": s.DeviceID, "status": "closed",
+	})
+	s.mu.Unlock()
 	m.store.Exec(nil, `UPDATE sessions SET closed_at=CURRENT_TIMESTAMP, status='closed' WHERE id=?`, id)
 	return nil
 }
