@@ -78,6 +78,8 @@ func main() {
 			adv = fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
 		}
 		cl = cluster.NewCluster(st, nodeID, cfg.NodeName, adv, cfg.ClusterToken)
+		// 存量设备归属迁移：本机设备必须带本节点 ID，否则前端会误判为远程副本
+		st.Exec(nil, `UPDATE devices SET node_id=? WHERE node_id='local' OR node_id=''`, nodeID)
 		// 节点状态 → 事件总线
 		cl.OnEvent(func(event string, data map[string]interface{}) {
 			bus.Publish(event, data)

@@ -481,7 +481,7 @@ func (h *ClusterHandler) internalFromTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	d := models.Device{Name: body.Name, GroupID: body.GroupID, TemplateID: &tpl.ID,
-		Description: fmt.Sprintf("基于模板「%s」创建", tpl.Name), NodeID: "local"}
+		Description: fmt.Sprintf("基于模板「%s」创建", tpl.Name), NodeID: h.cluster.SelfID()}
 	if err := h.store.CreateDevice(&d); err != nil {
 		jsonErr(w, 500, err.Error())
 		return

@@ -257,13 +257,22 @@ func (h *Handler) getDevice(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, d)
 }
 
+// selfNodeID 本节点 ID（集群模式为真实节点 ID；对齐 Python 版——本机设备
+// 必须带本节点 ID，否则前端 isRemote 误判为远程副本）
+func (h *Handler) selfNodeID() string {
+	if h.cluster != nil {
+		return h.cluster.SelfID()
+	}
+	return "local"
+}
+
 func (h *Handler) createDevice(w http.ResponseWriter, r *http.Request) {
 	var d models.Device
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		jsonErr(w, 400, "请求体错误")
 		return
 	}
-	d.NodeID = "local"
+	d.NodeID = h.selfNodeID()
 	if err := h.store.CreateDevice(&d); err != nil {
 		jsonErr(w, 500, err.Error())
 		return
@@ -321,7 +330,7 @@ func (h *Handler) publishDeviceChanged(deviceID int64) {
 	}
 	h.bus.Publish("device_changed", map[string]interface{}{
 		"id": d.ID, "name": d.Name, "description": d.Description, "location": d.Location,
-		"owner": d.Owner, "tags": d.Tags, "group_id": d.GroupID, "node_id": "local",
+		"owner": d.Owner, "tags": d.Tags, "group_id": d.GroupID, "node_id": h.selfNodeID(),
 		"online": d.Online, "connections": rcs,
 	})
 }
@@ -426,7 +435,7 @@ func (h *Handler) createFromTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := models.Device{Name: body.Name, GroupID: body.GroupID, TemplateID: &tpl.ID,
-		Description: fmt.Sprintf("基于模板「%s」创建", tpl.Name), NodeID: "local"}
+		Description: fmt.Sprintf("基于模板「%s」创建", tpl.Name), NodeID: h.selfNodeID()}
 	h.store.CreateDevice(&d)
 	// 建默认连接配置
 	for _, conn := range tpl.DefaultConnections {
