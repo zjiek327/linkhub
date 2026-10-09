@@ -85,3 +85,11 @@ func (c *SSHConnector) Read() (io.Reader, error) {
 	}
 	return c.stdout, nil
 }
+
+// Resize SSH PTY 窗口尺寸
+func (c *SSHConnector) Resize(rows, cols int) error {
+	if c.session == nil {
+		return fmt.Errorf("SSH 未连接")
+	}
+	return c.session.WindowChange(rows, cols)
+}

@@ -364,6 +364,21 @@ func (s *Session) Unsubscribe(clientID string) {
 
 func (s *Session) Control(clientID string, msg map[string]interface{}) {
 	typ, _ := msg["type"].(string)
+	// resize：仅写入者可改窗口尺寸，避免旁观者互相拉扯
+	if typ == "resize" {
+		rows, _ := msg["rows"].(float64)
+		cols, _ := msg["cols"].(float64)
+		if rows < 2 || cols < 2 || rows > 500 || cols > 1000 {
+			return
+		}
+		s.mu.RLock()
+		allowed := s.WriterID == "" || s.WriterID == clientID
+		s.mu.RUnlock()
+		if allowed {
+			s.Connector.Resize(int(rows), int(cols))
+		}
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch typ {

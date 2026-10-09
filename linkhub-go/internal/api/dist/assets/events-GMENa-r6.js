@@ -1,1 +1,0 @@
-import{H as c,I as l,n as r}from"./index-CvYMRDg0.js";function i(s){const n=r(!1);let e=null,t;function o(){e=new WebSocket(l("/ws/events")),e.onopen=()=>n.value=!0,e.onmessage=a=>{try{s(JSON.parse(a.data))}catch{}},e.onclose=()=>{n.value=!1,t=window.setTimeout(o,2e3)}}return o(),c(()=>{clearTimeout(t),e==null||e.close()}),{connected:n}}export{i as u};

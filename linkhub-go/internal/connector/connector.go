@@ -12,6 +12,8 @@ type Connector interface {
 	Close() error
 	Write(data []byte) error
 	Read() (io.Reader, error) // 返回持续读取流
+	// Resize 通知 PTY 窗口尺寸变化（无 PTY 的连接器空实现即可）
+	Resize(rows, cols int) error
 }
 
 // ConnectorFactory 由参数构造连接器

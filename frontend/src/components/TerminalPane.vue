@@ -16,7 +16,7 @@
         <el-button size="small" type="primary" plain :loading="reconnecting" @click="reconnect">{{ $t('terminal.reconnect') }}</el-button>
       </el-tooltip>
       <el-tooltip content="串口无窗口尺寸协商，tmux/vim/htop 显示异常时点这里（注入 stty rows/cols）" placement="bottom">
-        <el-button size="small" @click="syncSize">{{ $t('terminal.syncSize') }}</el-button>
+        <el-button size="small" @click="injectStty">{{ $t('terminal.syncSize') }}</el-button>
       </el-tooltip>
       <el-button size="small" type="danger" plain :disabled="status === 'closed'" @click="close">{{ $t('terminal.closeSession') }}</el-button>
     </div>
@@ -71,7 +71,25 @@ const myName = '用户-' + cid.replace(/^cid-/, '').slice(0, 6)
 const amWriter = ref(true)
 const viewers = ref(1)
 
+let pendingSizeKey = ''
+let sizeTimer: number | undefined
+
+// 自动同步：走 resize 控制消息（服务端调 PTY 尺寸），防抖避免侧栏动画/窗口
+// 拖动时连续 refit 把一串 stty 命令打进 shell
 function syncSize() {
+  if (!term || !ws || ws.readyState !== WebSocket.OPEN) return
+  const key = `${term.rows}x${term.cols}`
+  if (key === pendingSizeKey) return
+  clearTimeout(sizeTimer)
+  sizeTimer = window.setTimeout(() => {
+    if (!term || !ws || ws.readyState !== WebSocket.OPEN) return
+    pendingSizeKey = `${term.rows}x${term.cols}`
+    ws.send(JSON.stringify({ lh: { type: 'resize', rows: term.rows, cols: term.cols } }))
+  }, 300)
+}
+
+// 手动按钮：串口/tmux 等无 PTY 协商的场景，直接注入 stty 命令
+function injectStty() {
   if (!term || !ws || ws.readyState !== WebSocket.OPEN) return
   ws.send(encoder.encode(`stty rows ${term.rows} cols ${term.cols}\r`))
   sizeSynced = true

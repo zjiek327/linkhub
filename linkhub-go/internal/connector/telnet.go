@@ -68,3 +68,6 @@ func (c *TelnetConnector) Read() (io.Reader, error) {
 	}
 	return c.conn, nil
 }
+
+// Resize telnet 无 PTY，空实现
+func (c *TelnetConnector) Resize(rows, cols int) error { return nil }

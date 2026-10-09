@@ -94,3 +94,6 @@ func ListPorts() []PortInfo {
 	}
 	return out
 }
+
+// Resize 串口无 PTY，空实现
+func (c *SerialConnector) Resize(rows, cols int) error { return nil }

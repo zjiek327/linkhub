@@ -102,3 +102,6 @@ func (r *mqttReader) Read(p []byte) (int, error) {
 	r.buf = r.buf[n:]
 	return n, nil
 }
+
+// Resize MQTT 无 PTY，空实现
+func (c *MQTTConnector) Resize(rows, cols int) error { return nil }
