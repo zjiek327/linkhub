@@ -193,13 +193,21 @@ func (c *Cluster) DirectPeersLoop(peers []string) {
 }
 
 // ---------- UDP 广播发现 ----------
-func (c *Cluster) BeaconLoop(port int, ifaceBroadcasts []string) {
+// BeaconLoop 每 3s 向 broadcasts() 返回的广播地址发节点卡片，并监听对端卡片。
+// broadcasts 动态读取（设置页保存网卡后下一轮生效）
+func (c *Cluster) BeaconLoop(port int, broadcasts func() []string) {
 	card, _ := json.Marshal(map[string]string{
 		"v": "1", "node_id": c.selfID, "name": c.selfName, "address": c.address,
 	})
-	for _, brd := range ifaceBroadcasts {
-		go c.beaconSend(port, brd, card)
-	}
+	// 发送
+	go func() {
+		for {
+			for _, brd := range broadcasts() {
+				c.beaconSendCard(port, brd, card)
+			}
+			time.Sleep(3 * time.Second)
+		}
+	}()
 	// 接收
 	addr := &net.UDPAddr{IP: net.IPv4zero, Port: port}
 	conn, err := net.ListenUDP("udp", addr)
@@ -232,17 +240,15 @@ func (c *Cluster) BeaconLoop(port int, ifaceBroadcasts []string) {
 	}
 }
 
-func (c *Cluster) beaconSend(port int, broadcastAddr string, card []byte) {
+// beaconSendCard 单次向广播地址发一张卡片（由 BeaconLoop 周期调用）
+func (c *Cluster) beaconSendCard(port int, broadcastAddr string, card []byte) {
 	addr := &net.UDPAddr{IP: net.ParseIP(broadcastAddr), Port: port}
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	for {
-		conn.Write(card)
-		time.Sleep(3 * time.Second)
-	}
+	conn.Write(card)
 }
 
 func (c *Cluster) Token() string    { return c.token }

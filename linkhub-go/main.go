@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -116,7 +117,17 @@ func main() {
 		r.Get("/ws/cluster/relay/{session_id}", clusterRelay.PeerRelay)
 		go cl.DirectPeersLoop(cfg.ClusterPeers)
 		if cfg.DiscoveryPort > 0 {
-			go cl.BeaconLoop(cfg.DiscoveryPort, []string{"255.255.255.255"})
+			// 广播地址动态读取（设置页「发现网络」保存后下一轮生效）
+			go cl.BeaconLoop(cfg.DiscoveryPort, func() []string {
+				if v := st.GetMeta("beacon_interfaces"); v != "" {
+					list := []string{}
+					json.Unmarshal([]byte(v), &list)
+					if len(list) > 0 {
+						return list
+					}
+				}
+				return api.DefaultBeaconBroadcasts()
+			})
 		}
 		go cl.DirectorySyncLoop()
 		go cl.ResourceWatchLoop(func(event string, data map[string]interface{}) { bus.Publish(event, data) })

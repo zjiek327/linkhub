@@ -68,6 +68,7 @@ func (h *Handler) Router() http.Handler {
 			r.Get("/api/connector-kinds", h.connectorKinds)
 			r.Get("/api/stats", h.stats)
 			r.Get("/api/system/interfaces", h.systemInterfaces)
+			r.Get("/api/system/beacon-interfaces", h.getBeaconInterfaces)
 		})
 
 		// 操作（operator+）
@@ -92,6 +93,8 @@ func (h *Handler) Router() http.Handler {
 			r.Post("/api/tasks", h.createTask)
 			r.Put("/api/tasks/{id}", h.updateTask)
 			r.Delete("/api/tasks/{id}", h.deleteTask)
+			// 发现网络（网卡选择）
+			r.Post("/api/system/beacon-interfaces", h.saveBeaconInterfaces)
 		})
 
 		// 管理员
@@ -704,11 +707,35 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 // ---------- 系统 ----------
 // systemInterfaces 非 loopback 且 UP 的网卡（IPv4）
 func (h *Handler) systemInterfaces(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, systemInterfaceList())
+}
+
+// getBeaconInterfaces 已选的发现广播地址（空 = 全部网卡）
+func (h *Handler) getBeaconInterfaces(w http.ResponseWriter, r *http.Request) {
+	v := h.store.GetMeta("beacon_interfaces")
+	out := []string{}
+	json.Unmarshal([]byte(v), &out)
+	jsonOut(w, map[string]interface{}{"interfaces": out})
+}
+
+// saveBeaconInterfaces 保存广播地址选择，beacon 下一轮生效
+func (h *Handler) saveBeaconInterfaces(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Broadcasts []string `json:"broadcasts"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	b, _ := json.Marshal(body.Broadcasts)
+	h.store.SetMeta("beacon_interfaces", string(b))
+	auditLog(h, r, "beacon_ifaces_save", "", strings.Join(body.Broadcasts, ","))
+	jsonOut(w, map[string]bool{"ok": true})
+}
+
+// systemInterfaceList 供 handler 与 beacon 默认广播共用
+func systemInterfaceList() []map[string]interface{} {
 	out := []map[string]interface{}{}
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		jsonErr(w, 500, err.Error())
-		return
+		return out
 	}
 	for _, ifc := range ifaces {
 		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
@@ -724,7 +751,7 @@ func (h *Handler) systemInterfaces(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			broadcast := ""
-			if ipnet.IP != nil {
+			if len(ipnet.Mask) == 4 {
 				bc := make(net.IP, 4)
 				for i := range bc {
 					bc[i] = ipnet.IP[i] | ^ipnet.Mask[i]
@@ -738,7 +765,18 @@ func (h *Handler) systemInterfaces(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	jsonOut(w, out)
+	return out
+}
+
+// DefaultBeaconBroadcasts 未配置时：全部网卡的广播地址 + 受限广播（main.go beacon 用）
+func DefaultBeaconBroadcasts() []string {
+	out := []string{"255.255.255.255"}
+	for _, i := range systemInterfaceList() {
+		if b, _ := i["broadcast"].(string); b != "" && b != "0.0.0.0" {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // ---------- 用户/审计 ----------
