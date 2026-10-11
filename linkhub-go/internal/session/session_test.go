@@ -35,7 +35,7 @@ func TestSerialSessionE2E(t *testing.T) {
 	// 打开会话
 	s, err := mgr.Open(0, "serial", map[string]interface{}{
 		"port": "/dev/pts/0", "baudrate": float64(9600), "auto_reconnect": false,
-	}, 1, "test")
+	}, 1, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

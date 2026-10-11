@@ -164,7 +164,7 @@ func (r *Runner) execRemote(nodeID string, deviceIDs []int64, command string, wa
 
 func (r *Runner) execOnConn(conn *models.ConnectionProfile, command string, waitMs int, nodeID string, deviceID int64, deviceName string) map[string]interface{} {
 	// 开临时会话执行
-	sess, err := r.manager.Open(conn.ID, conn.Kind, conn.Params, conn.DeviceID, "batch")
+	sess, err := r.manager.Open(conn.ID, conn.Kind, conn.Params, conn.DeviceID, "batch", nil)
 	if err != nil {
 		return map[string]interface{}{"node_id": nodeID, "device_id": deviceID, "device_name": deviceName,
 			"ok": false, "output": "", "error": err.Error()}

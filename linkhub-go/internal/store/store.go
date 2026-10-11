@@ -145,7 +145,71 @@ func migrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id);
 	`
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	return migrateTenants(db)
+}
+
+// migrateTenants 多租户结构：建表 + 加列 + 存量数据归入默认租户（平滑升级，行为不变）
+func migrateTenants(db *sql.DB) error {
+	ts := `
+	CREATE TABLE IF NOT EXISTS tenants (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		code TEXT UNIQUE NOT NULL,
+		status TEXT DEFAULT 'active',
+		remark TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE TABLE IF NOT EXISTS tenant_members (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		role TEXT DEFAULT 'viewer',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(tenant_id, user_id)
+	);
+	CREATE TABLE IF NOT EXISTS tenant_nodes (
+		tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		node_id TEXT NOT NULL,
+		UNIQUE(tenant_id, node_id)
+	);`
+	if _, err := db.Exec(ts); err != nil {
+		return err
+	}
+	// 默认租户
+	if _, err := db.Exec(`INSERT OR IGNORE INTO tenants (id, name, code, remark) VALUES (1, '默认租户', 'default', '内置租户，存量数据归属')`); err != nil {
+		return err
+	}
+	// 资源表补 tenant_id 列（幂等）
+	cols := map[string]string{
+		"devices":         "ALTER TABLE devices ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
+		"device_groups":   "ALTER TABLE device_groups ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
+		"credentials":     "ALTER TABLE credentials ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
+		"scheduled_tasks": "ALTER TABLE scheduled_tasks ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
+		"templates":       "ALTER TABLE templates ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
+		"audit_logs":      "ALTER TABLE audit_logs ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
+	}
+	for table, ddl := range cols {
+		var cnt int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='tenant_id'`, table).Scan(&cnt); err == nil && cnt == 0 {
+			if _, err := db.Exec(ddl); err != nil {
+				return fmt.Errorf("%s 加列: %w", table, err)
+			}
+			// 存量行归入默认租户（templates 的 builtin 行保持 NULL=全局）
+			if table == "templates" {
+				db.Exec(`UPDATE templates SET tenant_id=1 WHERE builtin=0 AND tenant_id IS NULL`)
+			} else {
+				db.Exec(fmt.Sprintf(`UPDATE %s SET tenant_id=1 WHERE tenant_id IS NULL`, table))
+			}
+		}
+	}
+	// 存量用户归入默认租户（admin 保持平台管理员：无成员关系；其余为 operator）
+	db.Exec(`INSERT OR IGNORE INTO tenant_members (tenant_id, user_id, role)
+		SELECT 1, id, CASE WHEN name='admin' THEN 'tenant_admin' ELSE role END FROM users`)
+	db.Exec(`UPDATE users SET role='tenant_admin' WHERE name='admin' AND role='admin'`)
+	return nil
 }
 
 // Exec 执行写操作，lastID 非空时回填
@@ -161,10 +225,14 @@ func (s *Store) Exec(lastID *int64, query string, args ...interface{}) error {
 }
 
 // ---------- 设备 ----------
-func (s *Store) ListDevices(keyword, tag string, groupID *int64) ([]models.Device, int, error) {
+func (s *Store) ListDevices(keyword, tag string, groupID *int64, tenantID *int64) ([]models.Device, int, error) {
 	q := `SELECT id,name,description,location,owner,tags,group_id,template_id,node_id,created_at,updated_at FROM devices`
 	args := []interface{}{}
 	where := ""
+	if tenantID != nil {
+		where += " AND tenant_id=?"
+		args = append(args, *tenantID)
+	}
 	if keyword != "" {
 		where += " AND (name LIKE ? OR description LIKE ?)"
 		args = append(args, "%"+keyword+"%", "%"+keyword+"%")
@@ -241,8 +309,8 @@ func (s *Store) CreateDevice(d *models.Device) error {
 	tags, _ := json.Marshal(d.Tags)
 	var id int64
 	err := s.Exec(&id,
-		`INSERT INTO devices (name,description,location,owner,tags,group_id,template_id,node_id) VALUES (?,?,?,?,?,?,?,?)`,
-		d.Name, d.Description, d.Location, d.Owner, string(tags), d.GroupID, d.TemplateID, d.NodeID)
+		`INSERT INTO devices (name,description,location,owner,tags,group_id,template_id,node_id,tenant_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+		d.Name, d.Description, d.Location, d.Owner, string(tags), d.GroupID, d.TemplateID, d.NodeID, d.TenantID)
 	if err != nil {
 		return err
 	}
@@ -276,8 +344,15 @@ func (s *Store) DeleteDevice(id int64) error {
 }
 
 // ---------- 分组 ----------
-func (s *Store) ListGroups() ([]models.DeviceGroup, error) {
-	rows, err := s.db.Query(`SELECT id,name,parent_id,created_at FROM device_groups ORDER BY id`)
+func (s *Store) ListGroups(tenantID *int64) ([]models.DeviceGroup, error) {
+	q := `SELECT id,name,parent_id,created_at FROM device_groups`
+	args := []interface{}{}
+	if tenantID != nil {
+		q += " WHERE tenant_id=?"
+		args = append(args, *tenantID)
+	}
+	q += " ORDER BY id"
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

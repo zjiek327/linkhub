@@ -24,6 +24,7 @@ type Client struct {
 
 type Session struct {
 	ID        int64
+	TenantID  *int64 // 会话归属租户（协作边界：跨租户不可旁观）
 	DeviceID  int64
 	ConnID    *int64
 	Kind      string
@@ -74,8 +75,8 @@ type PortBusyError struct {
 
 func (e *PortBusyError) Error() string { return e.Message }
 
-// Open 打开会话（或返回端口占用冲突）
-func (m *Manager) Open(connID int64, kind string, params map[string]interface{}, deviceID int64, openedBy string) (*Session, error) {
+// Open 打开会话（或返回端口占用冲突）。tenantID 非空时用于协作边界校验
+func (m *Manager) Open(connID int64, kind string, params map[string]interface{}, deviceID int64, openedBy string, tenantID *int64) (*Session, error) {
 	m.mu.Lock()
 	key := m.lockKey(kind, params)
 	if holder, ok := m.portLock[key]; ok {
@@ -104,7 +105,7 @@ func (m *Manager) Open(connID int64, kind string, params map[string]interface{},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		ID: sessID, DeviceID: deviceID, ConnID: &connID, Kind: kind, Params: params,
+		ID: sessID, TenantID: tenantID, DeviceID: deviceID, ConnID: &connID, Kind: kind, Params: params,
 		Connector: conn, Status: "connecting", Done: make(chan struct{}),
 		clients: map[string]*Client{}, ctx: ctx, cancel: cancel, store: m.store,
 	}
@@ -115,6 +116,14 @@ func (m *Manager) Open(connID int64, kind string, params map[string]interface{},
 
 	go s.run(m)
 	return s, nil
+}
+
+// TenantMatch 会话协作边界：任一侧无租户（平台/旧数据）放行，否则需相同
+func (s *Session) TenantMatch(tenantID *int64) bool {
+	if s == nil || s.TenantID == nil || tenantID == nil {
+		return true
+	}
+	return *s.TenantID == *tenantID
 }
 
 func (m *Manager) Get(id int64) *Session {

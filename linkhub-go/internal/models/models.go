@@ -2,6 +2,34 @@ package models
 
 import "time"
 
+// Tenant 租户（资源隔离边界）
+type Tenant struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Code      string    `json:"code"` // 登录用标识
+	Status    string    `json:"status"` // active / disabled
+	Remark    string    `json:"remark"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TenantMember 用户-租户关系（一个账号可加入多个租户，各租户角色可不同）
+type TenantMember struct {
+	ID        int64     `json:"id"`
+	TenantID  int64     `json:"tenant_id"`
+	TenantName string   `json:"tenant_name,omitempty"`
+	TenantCode string   `json:"tenant_code,omitempty"`
+	UserID    int64     `json:"user_id"`
+	UserName  string    `json:"user_name,omitempty"`
+	Role      string    `json:"role"` // tenant_admin / operator / viewer
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TenantNode 租户可用节点白名单（平台管理员分配；无记录=不限）
+type TenantNode struct {
+	TenantID int64  `json:"tenant_id"`
+	NodeID   string `json:"node_id"`
+}
+
 type DeviceGroup struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
@@ -32,6 +60,7 @@ type Device struct {
 	GroupID     *int64    `json:"group_id"`
 	TemplateID  *int64    `json:"template_id"`
 	NodeID      string    `json:"node_id"`
+	TenantID    *int64    `json:"tenant_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	// 运行时填充

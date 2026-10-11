@@ -17,9 +17,13 @@ func NewHandler(mgr *session.Manager, bus *events.Bus) *Handler {
 	return &Handler{manager: mgr, bus: bus}
 }
 
+// SetTenantResolver 注入请求→租户解析（终端协作边界用）
+func (h *Handler) SetTenantResolver(f func(*http.Request) *int64) { h.tenantOf = f }
+
 type Handler struct {
-	manager *session.Manager
-	bus     *events.Bus
+	manager  *session.Manager
+	bus      *events.Bus
+	tenantOf func(*http.Request) *int64 // 请求租户解析（协作边界，auth 注入）
 }
 
 // Terminal 处理 WS 终端：/ws/terminal/{session_id}

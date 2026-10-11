@@ -12,6 +12,7 @@ const router = createRouter({
     { path: '/cluster', name: 'cluster', component: () => import('../views/ClusterView.vue'), meta: { title: '集群管理' } },
     { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { title: '设置' } },
     { path: '/admin', name: 'admin', component: () => import('../views/AdminView.vue'), meta: { title: '系统管理', roles: ['admin'] } },
+    { path: '/tenants', name: 'tenants', component: () => import('../views/TenantsView.vue'), meta: { title: '租户管理', roles: ['admin'] } },
     { path: '/automation', name: 'automation', component: () => import('../views/AutomationView.vue'), meta: { title: '自动化' } },
     { path: '/terminal/:sessionId', name: 'terminal', component: () => import('../views/TerminalView.vue'), meta: { title: '终端' } },
   ],

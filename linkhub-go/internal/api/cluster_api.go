@@ -378,7 +378,7 @@ func (h *ClusterHandler) internalDirectory(w http.ResponseWriter, r *http.Reques
 	if !h.checkInternalToken(w, r) {
 		return
 	}
-	devices, _, _ := h.store.ListDevices("", "", nil)
+	devices, _, _ := h.store.ListDevices("", "", nil, nil)
 	online := h.manager.OnlineDeviceIDs()
 	out := []cluster.RemoteDevice{}
 	for _, d := range devices {
@@ -445,12 +445,17 @@ func (h *ClusterHandler) internalOpen(w http.ResponseWriter, r *http.Request) {
 			jsonOut(w, out)
 			return
 		}
-		s, err := h.manager.Open(c.ID, c.Kind, c.Params, c.DeviceID, "cluster")
+		dev, _ := h.store.GetDevice(c.DeviceID)
+		var devTenant *int64
+		if dev != nil {
+			devTenant = dev.TenantID
+		}
+		s, err := h.manager.Open(c.ID, c.Kind, c.Params, c.DeviceID, "cluster", devTenant)
 		emitOpen(w, h.store, s, err, h.cluster.SelfID(), false)
 		return
 	}
 	// 内联参数打开（无落库连接配置）
-	s, err := h.manager.Open(0, body.Kind, body.Params, body.DeviceID, "cluster")
+	s, err := h.manager.Open(0, body.Kind, body.Params, body.DeviceID, "cluster", nil)
 	emitOpen(w, h.store, s, err, h.cluster.SelfID(), false)
 }
 
@@ -576,7 +581,7 @@ func (h *ClusterHandler) localBatchExec(deviceIDs []int64, command string, waitM
 
 // execOnConn 开临时会话执行命令并收集输出窗口
 func execOnConn(mgr *session.Manager, conn *models.ConnectionProfile, command string, waitMs int, nodeID string, deviceID int64, deviceName string) map[string]interface{} {
-	sess, err := mgr.Open(conn.ID, conn.Kind, conn.Params, conn.DeviceID, "batch")
+	sess, err := mgr.Open(conn.ID, conn.Kind, conn.Params, conn.DeviceID, "batch", nil)
 	if err != nil {
 		return map[string]interface{}{"node_id": nodeID, "device_id": deviceID, "device_name": deviceName,
 			"ok": false, "output": "", "error": err.Error()}

@@ -123,8 +123,22 @@ export const api = {
     http.post<{ results: BatchResult[] }>('/cluster/batch/exec', { targets, command, wait_ms }).then(r => r.data),
 
   // 认证/用户/凭证/审计
-  login: (name: string, password: string) =>
-    http.post('/auth/login', { name, password }).then(r => r.data),
+  login: (name: string, password: string, tenant_code?: string) =>
+    http.post('/auth/login', { name, password, tenant_code }).then(r => r.data),
+  loginTenants: (name: string, password: string) =>
+    http.post('/auth/tenants', { name, password }).then(r => r.data),
+  switchTenant: (tenant_code: string) =>
+    http.post('/auth/switch-tenant', { tenant_code }).then(r => r.data),
+  tenants: () => http.get('/tenants/').then(r => r.data),
+  createTenant: (body: any) => http.post('/tenants/', body).then(r => r.data),
+  updateTenant: (id: number, body: any) => http.put(`/tenants/${id}/`, body).then(r => r.data),
+  deleteTenant: (id: number) => http.delete(`/tenants/${id}/`),
+  tenantMembers: (id: number) => http.get(`/tenants/${id}/members`).then(r => r.data),
+  addTenantMember: (id: number, body: any) => http.post(`/tenants/${id}/members`, body).then(r => r.data),
+  updateTenantMember: (id: number, userId: number, body: any) => http.put(`/tenants/${id}/members/${userId}`, body).then(r => r.data),
+  removeTenantMember: (id: number, userId: number) => http.delete(`/tenants/${id}/members/${userId}`),
+  tenantNodes: (id: number) => http.get(`/tenants/${id}/nodes`).then(r => r.data),
+  setTenantNodes: (id: number, nodes: string[]) => http.put(`/tenants/${id}/nodes`, { nodes }).then(r => r.data),
   me: () => http.get<Me>('/auth/me').then(r => r.data),
   users: () => http.get<UserItem[]>('/users').then(r => r.data),
   createUser: (body: any) => http.post<UserItem>('/users', body).then(r => r.data),

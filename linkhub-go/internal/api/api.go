@@ -140,26 +140,35 @@ func auditLog(h *Handler, r *http.Request, action, target, detail string) {
 // ---------- 认证 ----------
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name     string `json:"name"`
-		Password string `json:"password"`
+		Name       string `json:"name"`
+		Password   string `json:"password"`
+		TenantCode string `json:"tenant_code"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 	u, _ := h.store.GetUserByName(body.Name)
 	if u == nil || !auth.VerifyPassword(body.Password, u.PasswordHash) {
-		jsonErr(w, 401, "用户名或密码错误")
+		jsonErr(w,  401, "用户名或密码错误")
 		return
 	}
 	if !u.Enabled {
 		jsonErr(w, 403, "用户已禁用")
 		return
 	}
-	token := auth.MakeToken(u, h.store.GetMeta("secret_key"))
-	http.SetCookie(w, &http.Cookie{Name: "linkhub_token", Value: token, Path: "/", HttpOnly: true, MaxAge: 7 * 24 * 3600})
-	auditLog(h, r, "login", "", "")
-	jsonOut(w, map[string]interface{}{
-		"token": token,
-		"user":  map[string]interface{}{"id": u.ID, "name": u.Name, "role": u.Role, "enabled": u.Enabled},
-	})
+	// 多租户登录：tenant_code 必填（前端两步登录选择；兼容默认）
+	if body.TenantCode == "" {
+		if h.store.IsPlatformAdmin(u.ID) {
+			body.TenantCode = "__platform__"
+		} else {
+			tenants, _ := h.store.TenantsOfUser(u.ID)
+			if len(tenants) == 0 {
+				jsonErr(w, 403, "该账号未加入任何租户，请联系管理员")
+				return
+			}
+			body.TenantCode = tenants[0].TenantCode // 单租户直接进
+		}
+	}
+	h.tenantLogin(w, r, u, body.TenantCode)
+	auditLog(h, r, "login", u.Name, body.TenantCode)
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +195,7 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 			gid = &v
 		}
 	}
-	devices, total, err := h.store.ListDevices(keyword, tag, gid)
+	devices, total, err := h.store.ListDevices(keyword, tag, gid, h.tenantFilter(r))
 	if err != nil {
 		jsonErr(w, 500, err.Error())
 		return
@@ -227,6 +236,23 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonOut(w, map[string]interface{}{"total": total, "items": items})
+}
+
+// tenantFilter 当前请求的资源过滤租户：nil=不过滤（平台管理员平台视图）；
+// 普通用户=其租户。写操作用它给资源打租户
+func (h *Handler) tenantFilter(r *http.Request) *int64 {
+	tc := auth.TenantFrom(r.Context())
+	if tc == nil {
+		return nil
+	}
+	if tc.Platform && tc.TenantID == 0 {
+		return nil // 平台视图：跨租户可见
+	}
+	if tc.TenantID > 0 {
+		id := tc.TenantID
+		return &id
+	}
+	return nil
 }
 
 // nodeStatusMap 节点在线状态（含本机）
@@ -274,6 +300,11 @@ func (h *Handler) createDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.NodeID = h.selfNodeID()
+	d.TenantID = h.tenantFilter(r)
+	if d.TenantID != nil && !h.store.TenantAllowedNode(*d.TenantID, d.NodeID) {
+		jsonErr(w, 403, "该租户未被分配此节点，请联系平台管理员")
+		return
+	}
 	if err := h.store.CreateDevice(&d); err != nil {
 		jsonErr(w, 500, err.Error())
 		return
@@ -338,7 +369,7 @@ func (h *Handler) publishDeviceChanged(deviceID int64) {
 
 // ---------- 分组 ----------
 func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
-	g, _ := h.store.ListGroups()
+	g, _ := h.store.ListGroups(h.tenantFilter(r))
 	jsonOut(w, g)
 }
 
@@ -436,7 +467,7 @@ func (h *Handler) createFromTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := models.Device{Name: body.Name, GroupID: body.GroupID, TemplateID: &tpl.ID,
-		Description: fmt.Sprintf("基于模板「%s」创建", tpl.Name), NodeID: h.selfNodeID()}
+		Description: fmt.Sprintf("基于模板「%s」创建", tpl.Name), NodeID: h.selfNodeID(), TenantID: h.tenantFilter(r)}
 	h.store.CreateDevice(&d)
 	// 建默认连接配置
 	for _, conn := range tpl.DefaultConnections {
@@ -598,7 +629,12 @@ func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, out)
 		return
 	}
-	s, err := h.manager.Open(id, c.Kind, c.Params, c.DeviceID, openedBy)
+	dev, _ := h.store.GetDevice(c.DeviceID)
+	var tenantID *int64
+	if dev != nil {
+		tenantID = dev.TenantID
+	}
+	s, err := h.manager.Open(id, c.Kind, c.Params, c.DeviceID, openedBy, tenantID)
 	h.respondOpen(w, s, err, "local", true)
 }
 
@@ -742,7 +778,7 @@ func (h *Handler) connectorKinds(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 统计 ----------
 func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
-	devices, total, _ := h.store.ListDevices("", "", nil)
+	devices, total, _ := h.store.ListDevices("", "", nil, nil)
 	online := h.manager.OnlineDeviceIDs()
 	onlineCount := 0
 	for _, d := range devices {

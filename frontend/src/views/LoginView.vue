@@ -16,6 +16,12 @@
             <template #prefix><el-icon><Lock /></el-icon></template>
           </el-input>
         </el-form-item>
+        <el-form-item v-if="tenants.length > 1">
+          <el-select v-model="tenantCode" size="large" style="width:100%">
+            <template #prefix><el-icon><OfficeBuilding /></el-icon></template>
+            <el-option v-for="t in tenants" :key="t.code" :label="`${t.name}（${roleLabel(t.role)}）`" :value="t.code" />
+          </el-select>
+        </el-form-item>
         <el-button type="primary" size="large" style="width:100%" :loading="loading" @click="login">
           登 录
         </el-button>
@@ -31,7 +37,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
+import { User, Lock, OfficeBuilding } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { api, setToken } from '../api'
 
@@ -40,6 +46,9 @@ const router = useRouter()
 const name = ref('')
 const password = ref('')
 const loading = ref(false)
+// 多租户：账号密码验证后拉取可用租户；单租户/平台管理员无选择框直接进
+const tenants = ref<{ tenant_id: number; name: string; code: string; role: string }[]>([])
+const tenantCode = ref('')
 const firstRun = !localStorage.getItem('linkhub_token')
 // 进入登录页即清掉可能失效的旧 token（比如升级前残留的非 JWT 值）
 setToken('')
@@ -48,8 +57,21 @@ async function login() {
   if (!name.value || !password.value) return
   loading.value = true
   try {
-    const r = await api.login(name.value, password.value)
+    // 第一步（首次）：验证账号密码并拉取可用租户
+    if (!tenants.value.length) {
+      const tr = await api.loginTenants(name.value, password.value)
+      tenants.value = tr.tenants
+      if (tenants.value.length > 1) {
+        tenantCode.value = tenants.value[0].code
+        loading.value = false
+        return // 展示租户选择，用户二次点击登录
+      }
+    }
+    // 第二步：带租户登录（单租户默认直进）
+    const code = tenantCode.value || tenants.value[0]?.code || ''
+    const r = await api.login(name.value, password.value, code)
     setToken(r.token)
+    localStorage.setItem('linkhub_tenant', code)
     ElMessage.success(`${$t('login.welcome')}，${r.user.name}`)
     router.push('/')
   } catch (e: any) {
@@ -57,6 +79,10 @@ async function login() {
   } finally {
     loading.value = false
   }
+}
+
+function roleLabel(role: string) {
+  return { platform_admin: '平台管理员', tenant_admin: '管理员', operator: '操作员', viewer: '观察者' }[role] ?? role
 }
 </script>
 

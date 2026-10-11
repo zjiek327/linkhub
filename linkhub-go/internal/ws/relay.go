@@ -43,6 +43,9 @@ func (h *RelayHandler) RelayTerminal(w http.ResponseWriter, r *http.Request) {
 		wsClose(w, r, 4403, fmt.Sprintf("节点 %s 不在线或不可达", nodeID))
 		return
 	}
+	// 租户协作边界（浏览器入口）：会话归属对端，本地无法判断会话租户时放行对端判断；
+	// 本地已知租户的远程目录设备可在此预判——简化：透传 token 由对端 Terminal 校验
+	_ = indirect
 	// 浏览器 WS
 	browser, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {

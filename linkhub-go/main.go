@@ -93,12 +93,27 @@ func main() {
 
 	h := api.NewHandler(st, mgr, mw, crypto, bus, cl, sched)
 	wsH := ws.NewHandler(mgr, bus)
+	// 终端协作边界：WS 查询 token 解析租户（与 auth 中间件同源逻辑）
+	wsH.SetTenantResolver(func(r *http.Request) *int64 {
+		ctx, reject := mw.Authenticate(r)
+		if reject != "" {
+			return nil
+		}
+		tc := auth.TenantFrom(ctx)
+		if tc == nil || tc.TenantID == 0 {
+			return nil
+		}
+		id := tc.TenantID
+		return &id
+	})
 	var clusterRelay *ws.RelayHandler
 	if cl != nil {
 		clusterRelay = ws.NewRelayHandler(mgr, cl)
 	}
 
 	r := chi.NewRouter()
+	// 租户路由先注册（具体前缀优先于下方的 Mount("/",...) 全量挂载）
+	h.RegisterTenantRoutes(r)
 	// 直接挂 API 路由（不用 Mount，避免路径前缀问题）
 	r.Mount("/", h.Router())
 	r.Get("/ws/terminal/{session_id}", func(w http.ResponseWriter, r *http.Request) {
