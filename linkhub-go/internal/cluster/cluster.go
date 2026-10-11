@@ -80,6 +80,11 @@ func (c *Cluster) Join(address string) (*Node, error) {
 		NodeID  string `json:"node_id"`
 		Name    string `json:"name"`
 		Address string `json:"address"`
+		Peers   []struct {
+			NodeID  string `json:"node_id"`
+			Name    string `json:"name"`
+			Address string `json:"address"`
+		} `json:"peers"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	n := &Node{Node: models.Node{
@@ -91,9 +96,44 @@ func (c *Cluster) Join(address string) (*Node, error) {
 	c.mu.Unlock()
 	c.store.UpsertNode(&n.Node)
 	c.noteJoined(result.NodeID)
+	// gossip：对方把自己认识的节点列表带回来了 → 未知节点进「待加入」，
+	// 用户点击即可加入，实现"加了 A 就能看见 A 的邻居"
+	c.gossipFrom(result.Peers)
 	// 启动心跳
 	go c.heartbeatLoop(n)
 	return n, nil
+}
+
+// gossipFrom 把 handshake/ping 带回的节点列表中未知节点加入待加入列表
+func (c *Cluster) gossipFrom(peers []struct {
+	NodeID  string `json:"node_id"`
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}) {
+	for _, p := range peers {
+		if p.NodeID == "" || p.Address == "" || p.NodeID == c.selfID {
+			continue
+		}
+		if c.GetPeer(p.NodeID) != nil || c.IsDismissed(p.NodeID) {
+			continue
+		}
+		existing := false
+		for _, pd := range c.ListPending() {
+			if pd.NodeID == p.NodeID {
+				existing = true
+				break
+			}
+		}
+		if existing {
+			continue
+		}
+		c.AddPending(p.NodeID, p.Name, p.Address)
+		if c.onEvent != nil {
+			c.onEvent("node_discovered", map[string]interface{}{
+				"node_id": p.NodeID, "name": p.Name, "address": p.Address, "via": "gossip",
+			})
+		}
+	}
 }
 
 // ---------- 心跳 ----------
@@ -120,6 +160,17 @@ func (c *Cluster) ping(n *Node) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// 心跳顺带 gossip：对方的 peers 列表有变化（新节点）时更新待加入列表
+	var result struct {
+		Peers []struct {
+			NodeID  string `json:"node_id"`
+			Name    string `json:"name"`
+			Address string `json:"address"`
+		} `json:"peers"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) == nil {
+		c.gossipFrom(result.Peers)
+	}
 	return nil
 }
 

@@ -3,10 +3,9 @@ rem 灵枢 LinkHub Go 版一键启动（Windows）：双击即可
 cd /d "%~dp0"
 
 rem ---- 加载本机 .env 配置（不存在则用默认值）----
+rem LINKHUB_CLUSTER_PEERS 支持多行书写：重复出现时自动逗号累加（否则后行会覆盖前行）
 if exist .env (
-  for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
-    if not defined %%a set %%a=%%b
-  )
+  for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do call :loadenv "%%a" "%%b"
 )
 if not defined LINKHUB_PORT set LINKHUB_PORT=8000
 if not defined LINKHUB_CLUSTER_ENABLED set LINKHUB_CLUSTER_ENABLED=true
@@ -29,3 +28,18 @@ echo 灵枢 LinkHub 已启动: http://localhost:%LINKHUB_PORT%
 echo 节点: %LINKHUB_NODE_NAME%  集群: %LINKHUB_CLUSTER_ENABLED%
 echo 关闭本窗口不影响运行；停止请在任务管理器结束 linkhub.exe
 timeout /t 3
+goto :eof
+
+:loadenv
+rem %~1=key %~2=value（CRLF 已由 for /f 处理）
+if "%~2"=="" goto :eof
+if /i "%~1"=="LINKHUB_CLUSTER_PEERS" (
+  if defined LINKHUB_CLUSTER_PEERS (
+    set "LINKHUB_CLUSTER_PEERS=%LINKHUB_CLUSTER_PEERS%,%~2"
+  ) else (
+    set "LINKHUB_CLUSTER_PEERS=%~2"
+  )
+) else (
+  if not defined %~1 set "%~1=%~2"
+)
+goto :eof

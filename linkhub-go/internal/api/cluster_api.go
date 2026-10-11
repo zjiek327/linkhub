@@ -350,6 +350,7 @@ func (h *ClusterHandler) internalPing(w http.ResponseWriter, r *http.Request) {
 		"node_id": h.cluster.SelfID(), "name": h.cluster.SelfName(),
 		"address": h.cluster.Address(), "ts": time.Now().Format(time.RFC3339),
 		"resources": h.cluster.SelfResources(),
+		"peers":     h.cluster.ListNodes(), // gossip：对方据此发现新节点
 	})
 }
 

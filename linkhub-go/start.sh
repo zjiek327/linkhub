@@ -4,7 +4,20 @@
 cd "$(dirname "$0")"
 
 # ---- 本机配置（.env 存在则加载，可用环境变量覆盖）----
-[ -f .env ] && . ./.env
+# LINKHUB_CLUSTER_PEERS 支持多行书写：重复出现时自动逗号累加（否则后行会覆盖前行）
+if [ -f .env ]; then
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    _line="${_line%$'\r'}"
+    case "$_line" in \#*|"") continue ;; esac
+    _key="${_line%%=*}"; _val="${_line#*=}"
+    [ -z "$_key" ] && continue
+    if [ "$_key" = "LINKHUB_CLUSTER_PEERS" ]; then
+      if [ -n "${!_key}" ]; then export "$_key=${!_key},$_val"; else export "$_key=$_val"; fi
+    else
+      export "$_key=$_val"
+    fi
+  done < .env
+fi
 
 # ---- 配置（可用环境变量覆盖）----
 export LINKHUB_PORT=${LINKHUB_PORT:-8000}
