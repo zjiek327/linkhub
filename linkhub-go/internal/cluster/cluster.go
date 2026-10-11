@@ -29,6 +29,7 @@ type Cluster struct {
 	peers    map[string]*Node
 	pending  map[string]Pending                 // UDP 发现的待加入节点
 	known    map[string]KnownNode               // gossip 学到的间接节点（跨网段经 via 中转）
+	seedNodes []models.Node                     // 上次运行遗留的节点（启动即展示，重连后转在线）
 	remoteDir map[string]map[int64]RemoteDevice // nodeID → deviceID → 远程设备缓存
 	store    *store.Store
 	client   *http.Client
@@ -36,13 +37,60 @@ type Cluster struct {
 }
 
 func NewCluster(st *store.Store, selfID, selfName, address, token string) *Cluster {
-	return &Cluster{
+	c := &Cluster{
 		selfID: selfID, selfName: selfName, address: address, token: token,
 		peers: map[string]*Node{}, pending: map[string]Pending{},
 		known: map[string]KnownNode{}, remoteDir: map[string]map[int64]RemoteDevice{},
 		store: st,
 		client: &http.Client{Timeout: 6 * time.Second},
 	}
+	// 上次运行加入过的节点从库加载：启动即显示（离线态），DirectPeersLoop 自动重连后转在线
+	if nodes, err := st.ListNodes(); err == nil {
+		for _, n := range nodes {
+			if n.NodeID != selfID {
+				c.seedNodes = append(c.seedNodes, n)
+			}
+		}
+	}
+	return c
+}
+
+// ---------- 已加入节点的持久化（重启后自动重连） ----------
+const joinedAddrsKey = "joined_addrs"
+
+func (c *Cluster) joinedAddrList() []string {
+	list := []string{}
+	if v := c.store.GetMeta(joinedAddrsKey); v != "" {
+		json.Unmarshal([]byte(v), &list)
+	}
+	return list
+}
+
+func (c *Cluster) addJoinedAddr(addr string) {
+	list := c.joinedAddrList()
+	for _, a := range list {
+		if a == addr {
+			return
+		}
+	}
+	list = append(list, addr)
+	b, _ := json.Marshal(list)
+	c.store.SetMeta(joinedAddrsKey, string(b))
+}
+
+func (c *Cluster) removeJoinedAddr(addr string) {
+	list := c.joinedAddrList()
+	out := list[:0]
+	for _, a := range list {
+		if a != addr {
+			out = append(out, a)
+		}
+	}
+	if len(out) == len(list) {
+		return
+	}
+	b, _ := json.Marshal(out)
+	c.store.SetMeta(joinedAddrsKey, string(b))
 }
 
 func (c *Cluster) SelfID() string { return c.selfID }
@@ -94,6 +142,14 @@ func (c *Cluster) Join(address string) (*Node, error) {
 	c.mu.Unlock()
 	c.store.UpsertNode(&n.Node)
 	c.noteJoined(result.NodeID)
+	c.addJoinedAddr(address)
+	seed := c.seedNodes[:0]
+	for _, sn := range c.seedNodes {
+		if sn.NodeID != result.NodeID {
+			seed = append(seed, sn)
+		}
+	}
+	c.seedNodes = seed
 	c.mu.Lock()
 	delete(c.known, result.NodeID) // 已直连，不再是间接节点
 	c.mu.Unlock()
@@ -227,6 +283,18 @@ func (c *Cluster) ListNodes() []models.Node {
 	for _, k := range c.known {
 		out = append(out, k.Node) // 间接节点（带 via）
 	}
+	for _, sn := range c.seedNodes { // 上次运行的节点：重连成功前以离线态显示
+		dup := false
+		for _, o := range out {
+			if o.NodeID == sn.NodeID {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, sn)
+		}
+	}
 	return out
 }
 
@@ -250,8 +318,20 @@ func (c *Cluster) GetPeerByAddress(addr string) *Node {
 
 func (c *Cluster) RemovePeer(nodeID string) {
 	c.mu.Lock()
+	n := c.peers[nodeID]
 	delete(c.peers, nodeID)
+	delete(c.known, nodeID)
+	seed := c.seedNodes[:0]
+	for _, sn := range c.seedNodes {
+		if sn.NodeID != nodeID {
+			seed = append(seed, sn)
+		}
+	}
+	c.seedNodes = seed
 	c.mu.Unlock()
+	if n != nil {
+		c.removeJoinedAddr(n.Address) // 主动移除后不再自动重连
+	}
 	c.store.DeleteNode(nodeID)
 }
 
@@ -259,7 +339,20 @@ func (c *Cluster) RemovePeer(nodeID string) {
 func (c *Cluster) DirectPeersLoop(peers []string) {
 	for {
 		time.Sleep(5 * time.Second)
-		for _, addr := range peers {
+		addrs := append([]string{}, peers...)
+		for _, a := range c.joinedAddrList() {
+			dup := false
+			for _, x := range addrs {
+				if x == a {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				addrs = append(addrs, a)
+			}
+		}
+		for _, addr := range addrs {
 			if c.GetPeerByAddress(addr) != nil {
 				continue
 			}
