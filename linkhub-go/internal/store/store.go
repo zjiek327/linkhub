@@ -174,6 +174,18 @@ func migrateTenants(db *sql.DB) error {
 		tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
 		node_id TEXT NOT NULL,
 		UNIQUE(tenant_id, node_id)
+	);
+	CREATE TABLE IF NOT EXISTS device_group_members (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id INTEGER NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(group_id, user_id)
+	);
+	CREATE TABLE IF NOT EXISTS device_group_devices (
+		group_id INTEGER NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+		device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+		UNIQUE(group_id, device_id)
 	);`
 	if _, err := db.Exec(ts); err != nil {
 		return err

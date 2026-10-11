@@ -207,3 +207,195 @@ func orDefault(v, def string) string {
 	}
 	return v
 }
+
+// ---------- 设备组成员/设备 ----------
+// GroupMembers 组内用户
+func (s *Store) GroupMembers(groupID int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT user_id FROM device_group_members WHERE group_id=?`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+// AddGroupMember / RemoveGroupMember
+func (s *Store) AddGroupMember(groupID, userID int64) error {
+	return s.Exec(nil, `INSERT OR IGNORE INTO device_group_members (group_id, user_id) VALUES (?,?)`, groupID, userID)
+}
+
+func (s *Store) RemoveGroupMember(groupID, userID int64) error {
+	return s.Exec(nil, `DELETE FROM device_group_members WHERE group_id=? AND user_id=?`, groupID, userID)
+}
+
+// GroupsOfUser 用户所在的组（含租户过滤）
+func (s *Store) GroupsOfUser(userID int64) ([]models.DeviceGroup, error) {
+	rows, err := s.db.Query(`SELECT g.id, g.name, g.parent_id, g.created_at
+		FROM device_groups g JOIN device_group_members m ON m.group_id=g.id
+		WHERE m.user_id=? ORDER BY g.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.DeviceGroup{}
+	for rows.Next() {
+		var g models.DeviceGroup
+		var pid sql.NullInt64
+		if err := rows.Scan(&g.ID, &g.Name, &pid, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		if pid.Valid {
+			g.ParentID = &pid.Int64
+		}
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// UserVisibility 分别返回：组授权可见设备（跨租户）、自己创建的设备（限租户）
+func (s *Store) UserVisibility(userID int64, userName string, tenantID *int64) (map[int64]bool, map[int64]bool, error) {
+	groupVisible := map[int64]bool{}
+	q := `SELECT dgd.device_id FROM device_group_devices dgd
+		JOIN device_group_members dgm ON dgm.group_id=dgd.group_id
+		WHERE dgm.user_id=?`
+	rows, err := s.db.Query(q, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		groupVisible[id] = true
+	}
+	rows.Close()
+	ownVisible := map[int64]bool{}
+	q2 := `SELECT id FROM devices WHERE owner=?`
+	args2 := []interface{}{userName}
+	if tenantID != nil {
+		q2 += " AND tenant_id=?"
+		args2 = append(args2, *tenantID)
+	}
+	rows2, err := s.db.Query(q2, args2...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var id int64
+		rows2.Scan(&id)
+		ownVisible[id] = true
+	}
+	return groupVisible, ownVisible, nil
+}
+
+// UserVisibleDeviceIDs 用户可见设备：所在组的设备 ∪ 自己创建的（owner=用户名）
+func (s *Store) UserVisibleDeviceIDs(userID int64, userName string, tenantID *int64) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	q := `SELECT dgd.device_id FROM device_group_devices dgd
+		JOIN device_group_members dgm ON dgm.group_id=dgd.group_id
+		JOIN devices d ON d.id=dgd.device_id
+		WHERE dgm.user_id=?`
+	args := []interface{}{userID}
+	if tenantID != nil {
+		q += " AND d.tenant_id=?"
+		args = append(args, *tenantID)
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		out[id] = true
+	}
+	rows.Close()
+	// 自己创建的
+	q2 := `SELECT id FROM devices WHERE owner=?`
+	args2 := []interface{}{userName}
+	if tenantID != nil {
+		q2 += " AND tenant_id=?"
+		args2 = append(args2, *tenantID)
+	}
+	rows2, err := s.db.Query(q2, args2...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var id int64
+		rows2.Scan(&id)
+		out[id] = true
+	}
+	return out, nil
+}
+
+// GroupDevices 组内设备
+func (s *Store) GroupDevices(groupID int64) []int64 {
+	rows, err := s.db.Query(`SELECT device_id FROM device_group_devices WHERE group_id=?`, groupID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		out = append(out, id)
+	}
+	return out
+}
+
+// SetGroupDevices 全量设置组内设备
+func (s *Store) SetGroupDevices(groupID int64, deviceIDs []int64) error {
+	if _, err := s.db.Exec(`DELETE FROM device_group_devices WHERE group_id=?`, groupID); err != nil {
+		return err
+	}
+	for _, d := range deviceIDs {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO device_group_devices (group_id, device_id) VALUES (?,?)`, groupID, d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DevicesOfGroups 指定组的设备 ID 集
+func (s *Store) DevicesOfGroups(groupIDs []int64) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	q := `SELECT device_id FROM device_group_devices WHERE group_id IN (` + placeholders(len(groupIDs)) + `)`
+	args := make([]interface{}, len(groupIDs))
+	for i, id := range groupIDs {
+		args[i] = id
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		out[id] = true
+	}
+	return out, nil
+}
+
+func placeholders(n int) string {
+	out := ""
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out += ","
+		}
+		out += "?"
+	}
+	return out
+}

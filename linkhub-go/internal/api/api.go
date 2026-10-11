@@ -210,10 +210,21 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 			gid = &v
 		}
 	}
-	devices, total, err := h.store.ListDevices(keyword, tag, gid, h.tenantFilter(r))
+	// 普通用户：先拉全量（不按租户），再按「组授权(跨租户) ∪ 本租户内自己建的」过滤；
+	// 管理员：直接按租户过滤（平台视图全量）
+	tc := auth.TenantFrom(r.Context())
+	isAdmin := tc == nil || tc.Platform || tc.Role == "tenant_admin"
+	tf := h.tenantFilter(r)
+	if !isAdmin {
+		tf = nil
+	}
+	devices, total, err := h.store.ListDevices(keyword, tag, gid, tf)
 	if err != nil {
 		jsonErr(w, 500, err.Error())
 		return
+	}
+	if !isAdmin {
+		devices = h.filterByVisibility(r, devices, &total)
 	}
 	online := h.manager.OnlineDeviceIDs()
 	nodeStatus := h.nodeStatusMap()
@@ -261,13 +272,53 @@ func (h *Handler) tenantFilter(r *http.Request) *int64 {
 		return nil
 	}
 	if tc.Platform && tc.TenantID == 0 {
-		return nil // 平台视图：跨租户可见
+		return nil // 平台视图：跨租户可见；创建的资源打默认租户（见 tenantFilterForCreate）
 	}
 	if tc.TenantID > 0 {
 		id := tc.TenantID
 		return &id
 	}
 	return nil
+}
+
+// tenantFilterForCreate 创建资源时的租户：平台视图归默认租户（避免 NULL 造成隔离盲区）
+func (h *Handler) tenantFilterForCreate(r *http.Request) *int64 {
+	if id := h.tenantFilter(r); id != nil {
+		return id
+	}
+	def := int64(1)
+	if t, _ := h.store.GetTenantByCode("default"); t != nil {
+		def = t.ID
+	}
+	return &def
+}
+
+// filterByVisibility 设备组可见性过滤：管理员（平台/租户）全量；
+// operator/viewer 只保留「用户所在组的设备 ∪ owner=自己」
+func (h *Handler) filterByVisibility(r *http.Request, devices []models.Device, total *int) []models.Device {
+	tc := auth.TenantFrom(r.Context())
+	if tc == nil || tc.Platform || tc.Role == "tenant_admin" {
+		return devices
+	}
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		return devices[:0]
+	}
+	// 组授权是跨租户的（平台管理员可把任意设备分给组）；自建设备仍限本租户
+	groupVisible, ownVisible, err := h.store.UserVisibility(u.ID, u.Name, h.tenantFilter(r))
+	if err != nil {
+		return devices[:0]
+	}
+	out := devices[:0]
+	for _, d := range devices {
+		if groupVisible[d.ID] || ownVisible[d.ID] {
+			out = append(out, d)
+		}
+	}
+	if total != nil {
+		*total = len(out)
+	}
+	return out
 }
 
 // nodeStatusMap 节点在线状态（含本机）
@@ -315,7 +366,7 @@ func (h *Handler) createDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.NodeID = h.selfNodeID()
-	d.TenantID = h.tenantFilter(r)
+	d.TenantID = h.tenantFilterForCreate(r)
 	if d.TenantID != nil && !h.store.TenantAllowedNode(*d.TenantID, d.NodeID) {
 		jsonErr(w, 403, "该租户未被分配此节点，请联系平台管理员")
 		return

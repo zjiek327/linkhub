@@ -12,9 +12,10 @@
         <el-menu-item index="/devices"><el-icon><Cpu /></el-icon><template #title>{{ $t('menu.devices') }}</template></el-menu-item>
         <el-menu-item index="/templates"><el-icon><Files /></el-icon><template #title>{{ $t('menu.templates') }}</template></el-menu-item>
         <el-menu-item index="/automation"><el-icon><VideoPlay /></el-icon><template #title>{{ $t('menu.automation') }}</template></el-menu-item>
-        <el-menu-item index="/cluster"><el-icon><Connection /></el-icon><template #title>{{ $t('menu.cluster') }}</template></el-menu-item>
+        <el-menu-item v-if="me?.role !== 'viewer'" index="/cluster"><el-icon><Connection /></el-icon><template #title>{{ $t('menu.cluster') }}</template></el-menu-item>
         <el-menu-item index="/settings"><el-icon><Setting /></el-icon><template #title>{{ $t('menu.settings') }}</template></el-menu-item>
-        <el-menu-item v-if="me?.role === 'admin'" index="/tenants"><el-icon><OfficeBuilding /></el-icon><template #title>租户管理</template></el-menu-item>
+        <el-menu-item v-if="['tenant_admin', 'platform_admin', 'admin'].includes(me?.role ?? '')" index="/accounts"><el-icon><User /></el-icon><template #title>帐号管理</template></el-menu-item>
+        <el-menu-item v-if="me?.role === 'admin' || me?.role === 'platform_admin'" index="/tenants"><el-icon><OfficeBuilding /></el-icon><template #title>租户管理</template></el-menu-item>
         <el-menu-item v-if="me?.role === 'admin'" index="/admin"><el-icon><UserFilled /></el-icon><template #title>{{ $t('menu.admin') }}</template></el-menu-item>
       </el-menu>
       <div class="collapse-btn" @click="toggleCollapse" :title="collapsed ? '展开菜单' : '收起菜单'">
@@ -44,7 +45,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Monitor, Cpu, Files, Connection, Setting, UserFilled, VideoPlay, Fold, Expand, OfficeBuilding } from '@element-plus/icons-vue'
+import { User, Monitor, Cpu, Files, Connection, Setting, UserFilled, VideoPlay, Fold, Expand, OfficeBuilding } from '@element-plus/icons-vue'
 import { api, setToken, type Me } from './api'
 import { settings } from './api/settings'
 import './api/settings'  // 启动即应用主题

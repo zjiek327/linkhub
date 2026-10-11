@@ -112,8 +112,9 @@ func main() {
 	}
 
 	r := chi.NewRouter()
-	// 租户路由先注册（具体前缀优先于下方的 Mount("/",...) 全量挂载）
+	// 租户/设备组路由先注册（具体前缀优先于下方的 Mount("/",...) 全量挂载）
 	h.RegisterTenantRoutes(r)
+	h.RegisterDeviceGroupRoutes(r)
 	// 直接挂 API 路由（不用 Mount，避免路径前缀问题）
 	r.Mount("/", h.Router())
 	r.Get("/ws/terminal/{session_id}", func(w http.ResponseWriter, r *http.Request) {

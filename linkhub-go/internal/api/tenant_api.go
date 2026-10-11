@@ -313,3 +313,145 @@ func (h *Handler) setTenantNodes(w http.ResponseWriter, r *http.Request) {
 	auditLog(h, r, "tenant_nodes_set", "", strconv.Itoa(len(body.Nodes))+" 个节点")
 	jsonOut(w, map[string]bool{"ok": true})
 }
+
+// RegisterDeviceGroupRoutes 设备组管理（组=成员+设备；帐号管理页入口）
+func (h *Handler) RegisterDeviceGroupRoutes(r chi.Router) {
+	r.Group(func(ar chi.Router) {
+		ar.Use(h.authMw.User)
+		ar.Route("/api/device-groups", func(r chi.Router) {
+			r.With(h.authMw.RequireTenantAdminHTTP).Get("/", h.listDeviceGroups)
+			r.With(h.authMw.RequireTenantAdminHTTP).Post("/", h.createDeviceGroup)
+			r.Route("/{id}", func(r chi.Router) {
+				r.With(h.authMw.RequireTenantAdminHTTP).Get("/", h.getDeviceGroup)
+				r.With(h.authMw.RequireTenantAdminHTTP).Delete("/", h.deleteDeviceGroup)
+				r.With(h.authMw.RequireTenantAdminHTTP).Post("/members/{user_id}", h.addGroupMember)
+				r.With(h.authMw.RequireTenantAdminHTTP).Delete("/members/{user_id}", h.removeGroupMember)
+				r.With(h.authMw.RequireTenantAdminHTTP).Put("/devices", h.setGroupDevices)
+			})
+			// 用户视角：自己的组与可见设备（所有登录用户）
+			r.Get("/mine", h.myGroups)
+		})
+	})
+}
+
+func (h *Handler) listDeviceGroups(w http.ResponseWriter, r *http.Request) {
+	groups, err := h.store.ListGroups(h.tenantFilter(r))
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	out := []map[string]interface{}{}
+	for _, g := range groups {
+		memberIDs, _ := h.store.GroupMembers(g.ID)
+		deviceIDs := h.store.GroupDevices(g.ID)
+		out = append(out, map[string]interface{}{
+			"id": g.ID, "name": g.Name, "parent_id": g.ParentID,
+			"members": len(memberIDs), "devices": len(deviceIDs),
+		})
+	}
+	jsonOut(w, out)
+}
+
+func (h *Handler) createDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Name == "" {
+		jsonErr(w, 400, "组名必填")
+		return
+	}
+	g, err := h.store.CreateGroup(body.Name, nil)
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "device_group_create", g.Name, "")
+	jsonOut(w, g)
+}
+
+func (h *Handler) getDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	groups, _ := h.store.ListGroups(nil)
+	var found *models.DeviceGroup
+	for i, g := range groups {
+		if g.ID == id {
+			found = &groups[i]
+			break
+		}
+	}
+	if found == nil {
+		jsonErr(w, 404, "组不存在")
+		return
+	}
+	memberIDs, _ := h.store.GroupMembers(id)
+	memberNames := []map[string]interface{}{}
+	for _, uid := range memberIDs {
+		if u, _ := h.store.GetUser(uid); u != nil {
+			memberNames = append(memberNames, map[string]interface{}{"id": u.ID, "name": u.Name})
+		}
+	}
+	jsonOut(w, map[string]interface{}{
+		"id": found.ID, "name": found.Name,
+		"members": memberNames, "device_ids": h.store.GroupDevices(id),
+	})
+}
+
+func (h *Handler) deleteDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	h.store.Exec(nil, `DELETE FROM device_group_devices WHERE group_id=?`, id)
+	h.store.Exec(nil, `DELETE FROM device_group_members WHERE group_id=?`, id)
+	h.store.Exec(nil, `DELETE FROM device_groups WHERE id=?`, id)
+	auditLog(h, r, "device_group_delete", "#"+strconv.FormatInt(id, 10), "")
+	w.WriteHeader(204)
+}
+
+func (h *Handler) addGroupMember(w http.ResponseWriter, r *http.Request) {
+	gid, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	uid, _ := strconv.ParseInt(chi.URLParam(r, "user_id"), 10, 64)
+	if err := h.store.AddGroupMember(gid, uid); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "device_group_member_add", "", "")
+	jsonOut(w, map[string]bool{"ok": true})
+}
+
+func (h *Handler) removeGroupMember(w http.ResponseWriter, r *http.Request) {
+	gid, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	uid, _ := strconv.ParseInt(chi.URLParam(r, "user_id"), 10, 64)
+	if err := h.store.RemoveGroupMember(gid, uid); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (h *Handler) setGroupDevices(w http.ResponseWriter, r *http.Request) {
+	gid, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	var body struct {
+		DeviceIDs []int64 `json:"device_ids"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if err := h.store.SetGroupDevices(gid, body.DeviceIDs); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "device_group_devices_set", "", strconv.Itoa(len(body.DeviceIDs))+" 台")
+	jsonOut(w, map[string]bool{"ok": true})
+}
+
+// myGroups 当前用户的组（帐号管理页/设备页筛选用）
+func (h *Handler) myGroups(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		jsonErr(w, 401, "未登录")
+		return
+	}
+	groups, err := h.store.GroupsOfUser(u.ID)
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	jsonOut(w, groups)
+}
