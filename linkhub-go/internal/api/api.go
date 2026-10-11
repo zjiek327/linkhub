@@ -569,23 +569,32 @@ func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 	if u != nil {
 		openedBy = u.Name
 	}
-	// 连接归属远程节点（"端口所在节点"选择）→ 把连接参数内联传给对端开临时会话。
-	// 不能只传 connection_id：连接配置行只存在本节点库中，对端查不到会 404
+	// 连接归属远程节点（"SSH 发起节点"等选择）→ 把连接参数内联传给对端开临时会话。
+	// 不能只传 connection_id：连接配置行只存在本节点库中，对端查不到会 404。
+	// 目标节点可直连则直达；间接节点（跨网段）经桥接转发
 	if h.cluster != nil && c.NodeID != "" && c.NodeID != "local" && c.NodeID != h.cluster.SelfID() {
-		p := h.cluster.GetPeer(c.NodeID)
-		if p == nil || p.Status != "online" {
-			jsonErr(w, 503, "节点不在线")
+		peer, indirect, ok := h.cluster.ResolveRoute(c.NodeID)
+		if !ok || peer.Status != "online" {
+			jsonErr(w, 503, "发起节点不在线或不可达")
 			return
 		}
 		var out struct {
 			SessionID int64  `json:"session_id"`
+			ID        int64  `json:"id"`
 			NodeID    string `json:"node_id"`
 		}
-		if err := h.cluster.PostJSON(p, "/api/cluster/internal/open",
-			map[string]interface{}{"kind": c.Kind, "params": c.Params, "device_id": c.DeviceID}, &out); err != nil {
+		body := map[string]interface{}{"kind": c.Kind, "params": c.Params, "device_id": c.DeviceID}
+		var err error
+		if indirect {
+			err = h.cluster.ForwardedCall(peer, c.NodeID, "POST", "/api/cluster/internal/open", body, &out)
+		} else {
+			err = h.cluster.PostJSON(peer, "/api/cluster/internal/open", body, &out)
+		}
+		if err != nil {
 			jsonErr(w, 409, err.Error())
 			return
 		}
+		out.ID = out.SessionID // 前端本地打开路径读 sess.id
 		jsonOut(w, out)
 		return
 	}
