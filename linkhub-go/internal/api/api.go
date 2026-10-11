@@ -178,7 +178,22 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFrom(r.Context())
-	jsonOut(w, map[string]interface{}{"id": u.ID, "name": u.Name, "role": u.Role, "enabled": u.Enabled})
+	// 顶栏显示当前租户内角色 + 租户名（登录选了哪个租户一目了然）
+	role := u.Role
+	tenantName := ""
+	if tc := auth.TenantFrom(r.Context()); tc != nil {
+		if tc.Role != "" {
+			role = tc.Role
+		}
+		if tc.Platform && tc.TenantID == 0 {
+			tenantName = "平台管理"
+		} else if tc.TenantID > 0 {
+			if t, _ := h.store.GetTenant(tc.TenantID); t != nil {
+				tenantName = t.Name
+			}
+		}
+	}
+	jsonOut(w, map[string]interface{}{"id": u.ID, "name": u.Name, "role": role, "enabled": u.Enabled, "tenant": tenantName})
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {

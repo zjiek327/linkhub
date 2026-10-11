@@ -27,7 +27,8 @@
         <span style="font-size:16px;font-weight:600">{{ $route.meta.title }}</span>
         <div style="display:flex;align-items:center;gap:12px">
           <el-tag type="success" effect="plain" size="small">🐙 连连在线</el-tag>
-          <el-tag size="small" effect="plain">{{ me?.name }} · {{ me?.role }}</el-tag>
+          <el-tag v-if="me?.tenant" size="small" effect="plain" type="info">{{ me.tenant }}</el-tag>
+          <el-tag size="small" effect="plain">{{ me?.name }} · {{ roleLabel(me?.role) }}</el-tag>
           <el-button size="small" text @click="logout">{{ $t('menu.logout') }}</el-button>
         </div>
       </el-header>
@@ -55,6 +56,10 @@ const me = ref<Me | null>(null)
 
 // 侧边栏折叠：只显示图标，悬停显示菜单名（el-menu collapse 内置 tooltip）
 const collapsed = ref(localStorage.getItem('linkhub_menu_collapsed') === '1')
+function roleLabel(role?: string) {
+  return { platform_admin: '平台管理员', tenant_admin: '租户管理员', operator: '操作员', viewer: '观察者' }[role ?? ''] ?? role
+}
+
 function toggleCollapse() {
   collapsed.value = !collapsed.value
   localStorage.setItem('linkhub_menu_collapsed', collapsed.value ? '1' : '0')
