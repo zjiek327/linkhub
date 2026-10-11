@@ -432,6 +432,19 @@ func (h *ClusterHandler) internalOpen(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, 404, "连接配置不存在")
 			return
 		}
+		// 连接的「发起节点」不是自己 → 继续把内联参数转发到真正发起节点
+		// （例：40 上的连接发起节点是 172，SSH 必须从 172 发起；会话落在 172，
+		//  其后任何人打开该连接都命中同一端口锁 = 观察者共享同一会话）
+		if c.NodeID != "" && c.NodeID != "local" && c.NodeID != h.cluster.SelfID() {
+			var out map[string]interface{}
+			if err := h.cluster.CallAny(c.NodeID, "POST", "/api/cluster/internal/open",
+				map[string]interface{}{"kind": c.Kind, "params": c.Params, "device_id": c.DeviceID}, &out); err != nil {
+				jsonErr(w, 409, err.Error())
+				return
+			}
+			jsonOut(w, out)
+			return
+		}
 		s, err := h.manager.Open(c.ID, c.Kind, c.Params, c.DeviceID, "cluster")
 		emitOpen(w, h.store, s, err, h.cluster.SelfID(), false)
 		return
