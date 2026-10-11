@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,11 +29,18 @@ func NewRelayHandler(mgr *session.Manager, cl *cluster.Cluster) *RelayHandler {
 }
 
 // RelayTerminal 中继：/ws/terminal/{session_id}?node={node_id}
+// node 为直连 peer → 直达；node 为 gossip 间接节点 → 经 via peer 链式转发
+// （node 参数逐跳原样传递，X-Relay-Hops 限 3 跳）
 func (h *RelayHandler) RelayTerminal(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("node")
-	peer := h.cluster.GetPeer(nodeID)
-	if peer == nil || peer.Status != "online" {
-		wsClose(w, r, 4403, fmt.Sprintf("节点 %s 不在线", nodeID))
+	hops, _ := strconv.Atoi(r.Header.Get("X-Relay-Hops"))
+	if hops > 3 {
+		wsClose(w, r, 4403, "中继跳数超限")
+		return
+	}
+	peer, indirect, ok := h.cluster.ResolveRoute(nodeID)
+	if !ok || peer.Status != "online" {
+		wsClose(w, r, 4403, fmt.Sprintf("节点 %s 不在线或不可达", nodeID))
 		return
 	}
 	// 浏览器 WS
@@ -42,11 +50,14 @@ func (h *RelayHandler) RelayTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer browser.Close(websocket.StatusNormalClosure, "")
 
-	// 连归属节点的 relay 端点（带令牌）
-	sid := r.PathValue("session_id")
-	relayURL := fmt.Sprintf("ws://%s/ws/cluster/relay/%s?%s",
-		peer.Address[len("http://"):], sid, r.URL.RawQuery)
+	// 连下一跳的 /ws/terminal（dispatcher 按同样的 node=selfID 规则落地或继续转发）：
+	// node 参数原样保留，X-Relay-Hops 计数
+	relayURL := fmt.Sprintf("ws://%s/ws/terminal/%s?%s",
+		peer.Address[len("http://"):], r.PathValue("session_id"), r.URL.RawQuery)
 	headers := http.Header{"X-LinkHub-Token": []string{h.cluster.Token()}}
+	if indirect {
+		headers.Set("X-Relay-Hops", strconv.Itoa(hops+1))
+	}
 	peerWS, _, err := websocket.Dial(r.Context(), relayURL, &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
 		browser.Close(websocket.StatusInternalError, "中继失败")

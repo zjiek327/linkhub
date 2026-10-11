@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"linkhub/internal/cluster"
 	"linkhub/internal/connector"
@@ -21,18 +24,16 @@ type ClusterHandler struct {
 	enabled bool
 	name    string
 	address string
+	// localRoutes 根路由器引用（forwardLocal 复用本节点内部路由执行被转发的调用）
+	localRoutes chi.Router
 }
 
 func NewClusterHandler(c *cluster.Cluster, st *store.Store, mgr *session.Manager, enabled bool, name, address string) *ClusterHandler {
 	return &ClusterHandler{cluster: c, store: st, manager: mgr, enabled: enabled, name: name, address: address}
 }
 
-func (h *ClusterHandler) RegisterRoutes(r interface {
-	Post(string, http.HandlerFunc)
-	Get(string, http.HandlerFunc)
-	Put(string, http.HandlerFunc)
-	Delete(string, http.HandlerFunc)
-}) {
+func (h *ClusterHandler) RegisterRoutes(r chi.Router) {
+	h.localRoutes = r
 	// 前端用
 	r.Get("/api/cluster/info", h.info)
 	r.Get("/api/cluster/nodes", h.nodes)
@@ -57,6 +58,63 @@ func (h *ClusterHandler) RegisterRoutes(r interface {
 	r.Post("/api/cluster/internal/devices/from-template/{key}", h.internalFromTemplate)
 	r.Delete("/api/cluster/internal/devices/{device_id}", h.internalDeleteDevice)
 	r.Get("/api/cluster/internal/connector-kinds", h.internalConnectorKinds)
+	r.Post("/api/cluster/internal/forward", h.internalForward)
+}
+
+// internalForward 跨网段转发：收到转发请求后，若目标是自己 → 本地执行；
+// 目标是直连 peer → 转发一跳；目标是经 gossip 学到的间接节点 → 经其 via peer 继续转发（限 3 跳）
+func (h *ClusterHandler) internalForward(w http.ResponseWriter, r *http.Request) {
+	if !h.checkInternalToken(w, r) {
+		return
+	}
+	var req cluster.ForwardReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, "请求体错误")
+		return
+	}
+	if req.Hops > 3 {
+		jsonErr(w, 502, "转发跳数超限")
+		return
+	}
+	// 目标是自己 → 按_method/path 本地执行
+	if req.Target == h.cluster.SelfID() {
+		h.forwardLocal(w, r, req)
+		return
+	}
+	// 下一跳：目标是我的直连 peer → 直达；否则查 known 的 via
+	peer, _, ok := h.cluster.ResolveRoute(req.Target)
+	if !ok {
+		jsonErr(w, 502, "目标节点不可达: "+req.Target)
+		return
+	}
+	if req.Hops >= 3 {
+		jsonErr(w, 502, "转发跳数超限")
+		return
+	}
+	next := cluster.ForwardReq{Target: req.Target, Method: req.Method, Path: req.Path, Payload: req.Payload, Hops: req.Hops + 1}
+	var out json.RawMessage
+	if err := h.cluster.PostJSON(peer, "/api/cluster/internal/forward", next, &out); err != nil {
+		jsonErr(w, 502, err.Error())
+		return
+	}
+	// 原样回传下游响应
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
+}
+
+// forwardLocal 在本节点执行被转发的调用（仅集群内部路径），响应直接写给调用方
+func (h *ClusterHandler) forwardLocal(w http.ResponseWriter, r *http.Request, req cluster.ForwardReq) {
+	inner, err := http.NewRequest(req.Method, "http://local"+req.Path, bytes.NewReader(req.Payload))
+	if err != nil {
+		jsonErr(w, 400, err.Error())
+		return
+	}
+	if req.Payload != nil {
+		inner.Header.Set("Content-Type", "application/json")
+	}
+	// 内部路由自身也有 token 校验，透传调用方的令牌
+	inner.Header.Set("X-LinkHub-Token", r.Header.Get("X-LinkHub-Token"))
+	h.localRoutes.ServeHTTP(w, inner)
 }
 
 func (h *ClusterHandler) requireEnabled(w http.ResponseWriter) bool {
@@ -157,22 +215,9 @@ func (h *ClusterHandler) leave(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]bool{"ok": true})
 }
 
-// ---------- proxy（本前端 → 远程节点） ----------
-func (h *ClusterHandler) peerOrErr(w http.ResponseWriter, nodeID string) *cluster.Node {
-	p := h.cluster.GetPeer(nodeID)
-	if p == nil || p.Status != "online" {
-		jsonErr(w, 503, "节点不在线")
-		return nil
-	}
-	return p
-}
-
+// ---------- proxy（本前端 → 远程节点，直连或经桥转发） ----------
 func (h *ClusterHandler) proxyDevice(w http.ResponseWriter, r *http.Request) {
 	if !h.requireEnabled(w) {
-		return
-	}
-	p := h.peerOrErr(w, r.PathValue("node_id"))
-	if p == nil {
 		return
 	}
 	var out struct {
@@ -180,7 +225,7 @@ func (h *ClusterHandler) proxyDevice(w http.ResponseWriter, r *http.Request) {
 		Connections []models.ConnectionProfile `json:"connections"`
 	}
 	path := fmt.Sprintf("/api/cluster/internal/devices/%s", r.PathValue("device_id"))
-	if err := h.cluster.GetJSON(p, path, &out); err != nil {
+	if err := h.cluster.CallAny(r.PathValue("node_id"), "GET", path, nil, &out); err != nil {
 		jsonErr(w, 502, err.Error())
 		return
 	}
@@ -191,16 +236,12 @@ func (h *ClusterHandler) proxyOpen(w http.ResponseWriter, r *http.Request) {
 	if !h.requireEnabled(w) {
 		return
 	}
-	p := h.peerOrErr(w, r.PathValue("node_id"))
-	if p == nil {
-		return
-	}
 	var body struct {
 		ConnectionID int64 `json:"connection_id"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 	var out map[string]interface{}
-	if err := h.cluster.PostJSON(p, "/api/cluster/internal/open", body, &out); err != nil {
+	if err := h.cluster.CallAny(r.PathValue("node_id"), "POST", "/api/cluster/internal/open", body, &out); err != nil {
 		jsonErr(w, 409, err.Error())
 		return
 	}
@@ -211,13 +252,9 @@ func (h *ClusterHandler) proxyCloseSession(w http.ResponseWriter, r *http.Reques
 	if !h.requireEnabled(w) {
 		return
 	}
-	p := h.peerOrErr(w, r.PathValue("node_id"))
-	if p == nil {
-		return
-	}
 	path := fmt.Sprintf("/api/cluster/internal/sessions/%s/close", r.PathValue("session_id"))
 	var out map[string]interface{}
-	if err := h.cluster.PostJSON(p, path, map[string]interface{}{}, &out); err != nil {
+	if err := h.cluster.CallAny(r.PathValue("node_id"), "POST", path, map[string]interface{}{}, &out); err != nil {
 		jsonErr(w, 502, err.Error())
 		return
 	}
@@ -228,12 +265,8 @@ func (h *ClusterHandler) proxyDeleteDevice(w http.ResponseWriter, r *http.Reques
 	if !h.requireEnabled(w) {
 		return
 	}
-	p := h.peerOrErr(w, r.PathValue("node_id"))
-	if p == nil {
-		return
-	}
 	path := fmt.Sprintf("/api/cluster/internal/devices/%s", r.PathValue("device_id"))
-	if err := h.cluster.DeleteJSON(p, path); err != nil {
+	if err := h.cluster.CallAny(r.PathValue("node_id"), "DELETE", path, nil, nil); err != nil {
 		jsonErr(w, 502, err.Error())
 		return
 	}
@@ -244,15 +277,11 @@ func (h *ClusterHandler) proxyFromTemplate(w http.ResponseWriter, r *http.Reques
 	if !h.requireEnabled(w) {
 		return
 	}
-	p := h.peerOrErr(w, r.PathValue("node_id"))
-	if p == nil {
-		return
-	}
 	var body map[string]interface{}
 	json.NewDecoder(r.Body).Decode(&body)
 	path := fmt.Sprintf("/api/cluster/internal/devices/from-template/%s", r.PathValue("key"))
 	var out map[string]interface{}
-	if err := h.cluster.PostJSON(p, path, body, &out); err != nil {
+	if err := h.cluster.CallAny(r.PathValue("node_id"), "POST", path, body, &out); err != nil {
 		jsonErr(w, 502, err.Error())
 		return
 	}
@@ -295,20 +324,10 @@ func (h *ClusterHandler) batchExec(w http.ResponseWriter, r *http.Request) {
 		results = append(results, h.localBatchExec(localIDs, body.Command, body.WaitMs)...)
 	}
 	for nodeID, ids := range remote {
-		p := h.cluster.GetPeer(nodeID)
-		if p == nil || p.Status != "online" {
-			for _, did := range ids {
-				results = append(results, map[string]interface{}{
-					"node_id": nodeID, "device_id": did, "device_name": fmt.Sprintf("#%d", did),
-					"ok": false, "output": "", "error": "节点不在线",
-				})
-			}
-			continue
-		}
 		var out struct {
 			Results []map[string]interface{} `json:"results"`
 		}
-		err := h.cluster.PostJSON(p, "/api/cluster/internal/batch/exec",
+		err := h.cluster.CallAny(nodeID, "POST", "/api/cluster/internal/batch/exec",
 			map[string]interface{}{"device_ids": ids, "command": body.Command, "wait_ms": body.WaitMs}, &out)
 		if err != nil {
 			for _, did := range ids {

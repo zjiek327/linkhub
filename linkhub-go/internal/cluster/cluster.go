@@ -28,6 +28,7 @@ type Cluster struct {
 	token    string
 	peers    map[string]*Node
 	pending  map[string]Pending                 // UDP 发现的待加入节点
+	known    map[string]KnownNode               // gossip 学到的间接节点（跨网段经 via 中转）
 	remoteDir map[string]map[int64]RemoteDevice // nodeID → deviceID → 远程设备缓存
 	store    *store.Store
 	client   *http.Client
@@ -38,7 +39,8 @@ func NewCluster(st *store.Store, selfID, selfName, address, token string) *Clust
 	return &Cluster{
 		selfID: selfID, selfName: selfName, address: address, token: token,
 		peers: map[string]*Node{}, pending: map[string]Pending{},
-		remoteDir: map[string]map[int64]RemoteDevice{}, store: st,
+		known: map[string]KnownNode{}, remoteDir: map[string]map[int64]RemoteDevice{},
+		store: st,
 		client: &http.Client{Timeout: 6 * time.Second},
 	}
 }
@@ -77,14 +79,10 @@ func (c *Cluster) Join(address string) (*Node, error) {
 		return nil, fmt.Errorf("握手失败 %d: %s", resp.StatusCode, string(b))
 	}
 	var result struct {
-		NodeID  string `json:"node_id"`
-		Name    string `json:"name"`
-		Address string `json:"address"`
-		Peers   []struct {
-			NodeID  string `json:"node_id"`
-			Name    string `json:"name"`
-			Address string `json:"address"`
-		} `json:"peers"`
+		NodeID  string        `json:"node_id"`
+		Name    string        `json:"name"`
+		Address string        `json:"address"`
+		Peers   []models.Node `json:"peers"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	n := &Node{Node: models.Node{
@@ -96,20 +94,19 @@ func (c *Cluster) Join(address string) (*Node, error) {
 	c.mu.Unlock()
 	c.store.UpsertNode(&n.Node)
 	c.noteJoined(result.NodeID)
-	// gossip：对方把自己认识的节点列表带回来了 → 未知节点进「待加入」，
-	// 用户点击即可加入，实现"加了 A 就能看见 A 的邻居"
-	c.gossipFrom(result.Peers)
+	c.mu.Lock()
+	delete(c.known, result.NodeID) // 已直连，不再是间接节点
+	c.mu.Unlock()
+	// gossip：对方把自己认识的节点带回来了 → 记为间接节点（经对方中转可达），
+	// 目录/开会话/终端流都能经此桥接，无需直连
+	c.gossipFrom(result.Peers, result.NodeID)
 	// 启动心跳
 	go c.heartbeatLoop(n)
 	return n, nil
 }
 
-// gossipFrom 把 handshake/ping 带回的节点列表中未知节点加入待加入列表
-func (c *Cluster) gossipFrom(peers []struct {
-	NodeID  string `json:"node_id"`
-	Name    string `json:"name"`
-	Address string `json:"address"`
-}) {
+// gossipFrom 把 handshake/ping 带回的节点列表记为间接节点（via=来源节点）
+func (c *Cluster) gossipFrom(peers []models.Node, via string) {
 	for _, p := range peers {
 		if p.NodeID == "" || p.Address == "" || p.NodeID == c.selfID {
 			continue
@@ -117,23 +114,45 @@ func (c *Cluster) gossipFrom(peers []struct {
 		if c.GetPeer(p.NodeID) != nil || c.IsDismissed(p.NodeID) {
 			continue
 		}
-		existing := false
-		for _, pd := range c.ListPending() {
-			if pd.NodeID == p.NodeID {
-				existing = true
-				break
+		if p.Status == "" {
+			p.Status = "online"
+		}
+		c.mu.Lock()
+		prev, existed := c.known[p.NodeID]
+		p.Via = via
+		c.known[p.NodeID] = KnownNode{Node: p}
+		c.mu.Unlock()
+		if !existed || prev.Node.Status != p.Status {
+			if c.onEvent != nil {
+				c.onEvent("node_status", map[string]interface{}{
+					"node_id": p.NodeID, "name": p.Name, "status": p.Status, "via": via,
+				})
 			}
 		}
-		if existing {
-			continue
-		}
-		c.AddPending(p.NodeID, p.Name, p.Address)
-		if c.onEvent != nil {
-			c.onEvent("node_discovered", map[string]interface{}{
-				"node_id": p.NodeID, "name": p.Name, "address": p.Address, "via": "gossip",
-			})
-		}
 	}
+}
+
+// KnownNode 经 gossip 学到的间接节点（跨网段经 via 中转）
+type KnownNode struct {
+	Node models.Node
+}
+
+// ResolveRoute 解析目标节点的下一跳：直连 peer 直接返回；间接节点返回其 via 直连 peer
+// 返回 (下一跳 peer, 目标是否间接, 是否可达)
+func (c *Cluster) ResolveRoute(nodeID string) (*Node, bool, bool) {
+	if p := c.GetPeer(nodeID); p != nil {
+		return p, false, true
+	}
+	c.mu.RLock()
+	k, ok := c.known[nodeID]
+	c.mu.RUnlock()
+	if !ok {
+		return nil, false, false
+	}
+	if p := c.GetPeer(k.Node.Via); p != nil && p.Status == "online" {
+		return p, true, true
+	}
+	return nil, true, false
 }
 
 // ---------- 心跳 ----------
@@ -142,6 +161,15 @@ func (c *Cluster) heartbeatLoop(n *Node) {
 		time.Sleep(5 * time.Second)
 		if err := c.ping(n); err != nil {
 			c.setStatus(n, "offline")
+			// 经该节点中转的间接节点一并标记离线
+			c.mu.Lock()
+			for id, k := range c.known {
+				if k.Node.Via == n.NodeID && k.Node.Status != "offline" {
+					k.Node.Status = "offline"
+					c.known[id] = k
+				}
+			}
+			c.mu.Unlock()
 		} else {
 			if n.Status != "online" {
 				c.setStatus(n, "online")
@@ -160,16 +188,12 @@ func (c *Cluster) ping(n *Node) error {
 		return err
 	}
 	defer resp.Body.Close()
-	// 心跳顺带 gossip：对方的 peers 列表有变化（新节点）时更新待加入列表
+	// 心跳顺带 gossip：对方的节点列表（含状态）刷新间接节点表
 	var result struct {
-		Peers []struct {
-			NodeID  string `json:"node_id"`
-			Name    string `json:"name"`
-			Address string `json:"address"`
-		} `json:"peers"`
+		Peers []models.Node `json:"peers"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&result) == nil {
-		c.gossipFrom(result.Peers)
+		c.gossipFrom(result.Peers, n.NodeID)
 	}
 	return nil
 }
@@ -199,6 +223,9 @@ func (c *Cluster) ListNodes() []models.Node {
 	}}
 	for _, p := range c.peers {
 		out = append(out, p.Node)
+	}
+	for _, k := range c.known {
+		out = append(out, k.Node) // 间接节点（带 via）
 	}
 	return out
 }
@@ -279,7 +306,7 @@ func (c *Cluster) BeaconLoop(port int, broadcasts func() []string) {
 		if json.Unmarshal(buf[:n], &card) != nil || card.NodeID == c.selfID {
 			continue
 		}
-		if c.GetPeer(card.NodeID) == nil && !c.IsDismissed(card.NodeID) {
+		if c.GetPeer(card.NodeID) == nil && !c.IsDismissed(card.NodeID) && !c.isKnown(card.NodeID) {
 			// 新节点 → 待加入列表
 			c.AddPending(card.NodeID, card.Name, card.Address)
 			if c.onEvent != nil {

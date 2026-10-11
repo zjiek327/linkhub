@@ -113,6 +113,46 @@ func (c *Cluster) DeleteJSON(p *Node, path string) error {
 	return c.doJSON("DELETE", p.Address, path, nil, nil)
 }
 
+// ---------- 跨网段转发（经 via peer 中转的通用 RPC） ----------
+type ForwardReq struct {
+	Target  string          `json:"target"`  // 最终目标节点 ID
+	Method  string          `json:"method"`
+	Path    string          `json:"path"`
+	Payload json.RawMessage `json:"payload"`
+	Hops    int             `json:"hops"`
+}
+
+// ForwardedCall 经中转调用任意节点：peer 为下一跳直连节点，target 为最终目标
+func (c *Cluster) ForwardedCall(peer *Node, target, method, path string, payload, out interface{}) error {
+	var raw json.RawMessage
+	if payload != nil {
+		b, _ := json.Marshal(payload)
+		raw = b
+	}
+	req := ForwardReq{Target: target, Method: method, Path: path, Payload: raw, Hops: 1}
+	return c.doJSON("POST", peer.Address, "/api/cluster/internal/forward", req, out)
+}
+
+// CallAny 统一入口：目标可直连则直连，间接则经 via 转发
+func (c *Cluster) CallAny(nodeID, method, path string, payload, out interface{}) error {
+	peer, indirect, ok := c.ResolveRoute(nodeID)
+	if !ok {
+		return fmt.Errorf("节点 %s 不可达（不在线或无中转路径）", nodeID)
+	}
+	if !indirect {
+		return c.doJSON(method, peer.Address, path, payload, out)
+	}
+	return c.ForwardedCall(peer, nodeID, method, path, payload, out)
+}
+
+// isKnown 是否已作为间接节点可知
+func (c *Cluster) isKnown(nodeID string) bool {
+	c.mu.RLock()
+	_, ok := c.known[nodeID]
+	c.mu.RUnlock()
+	return ok
+}
+
 // ---------- 远程设备目录缓存（反熵） ----------
 type RemoteConn struct {
 	ID      int64                  `json:"id"`
@@ -142,7 +182,8 @@ func (c *Cluster) syncDirectoryOnce() {
 			continue
 		}
 		var dir []RemoteDevice
-		if err := c.doJSON("GET", p.Address, "/api/cluster/internal/directory", nil, &dir); err != nil {
+		// 直连 peer 直接拉；间接节点经 via 转发拉（跨网段桥接）
+		if err := c.CallAny(p.NodeID, "GET", "/api/cluster/internal/directory", nil, &dir); err != nil {
 			log.Printf("目录同步 %s 失败: %v", p.Name, err)
 			continue
 		}

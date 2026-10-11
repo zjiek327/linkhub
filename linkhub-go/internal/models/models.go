@@ -108,6 +108,8 @@ type Node struct {
 	IsSelf    bool              `json:"is_self"`
 	LastSeen  time.Time         `json:"last_seen"`
 	Resources map[string]interface{} `json:"resources"`
+	// Via 非空表示间接节点：经该 node_id 的直连 peer 中转可达（跨网段桥接）
+	Via string `json:"via,omitempty"`
 }
 
 type ScheduledTask struct {

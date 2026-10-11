@@ -102,8 +102,9 @@ func main() {
 	// 直接挂 API 路由（不用 Mount，避免路径前缀问题）
 	r.Mount("/", h.Router())
 	r.Get("/ws/terminal/{session_id}", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("node") != "" {
-			// 中继（集群模式才注册 relay，未启用时 404）
+		node := r.URL.Query().Get("node")
+		// node 为空或等于本节点 → 本地终端；否则经中继（间接节点链式转发）
+		if node != "" && node != cl.SelfID() {
 			if clusterRelay != nil {
 				clusterRelay.RelayTerminal(w, r)
 				return

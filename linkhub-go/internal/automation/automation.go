@@ -133,20 +133,26 @@ func (r *Runner) execRemote(nodeID string, deviceIDs []int64, command string, wa
 		}
 		return out
 	}
-	peer := r.cluster.GetPeer(nodeID)
-	if peer == nil || peer.Status != "online" {
+	peer, indirect, ok := r.cluster.ResolveRoute(nodeID)
+	if !ok || peer.Status != "online" {
 		for _, did := range deviceIDs {
 			out = append(out, map[string]interface{}{"node_id": nodeID, "device_id": did,
-				"ok": false, "output": "", "error": "节点不在线"})
+				"ok": false, "output": "", "error": "节点不在线或不可达"})
 		}
 		return out
 	}
-	// 走对方 internal/batch/exec
+	// 走对方 internal/batch/exec（直连直达；间接经 via 转发）
 	var result struct {
 		Results []map[string]interface{} `json:"results"`
 	}
 	body := map[string]interface{}{"device_ids": deviceIDs, "command": command, "wait_ms": waitMs}
-	if err := r.cluster.PostJSON(peer, "/api/cluster/internal/batch/exec", body, &result); err != nil {
+	var err error
+	if indirect {
+		err = r.cluster.ForwardedCall(peer, nodeID, "POST", "/api/cluster/internal/batch/exec", body, &result)
+	} else {
+		err = r.cluster.PostJSON(peer, "/api/cluster/internal/batch/exec", body, &result)
+	}
+	if err != nil {
 		for _, did := range deviceIDs {
 			out = append(out, map[string]interface{}{"node_id": nodeID, "device_id": did,
 				"ok": false, "output": "", "error": err.Error()})
