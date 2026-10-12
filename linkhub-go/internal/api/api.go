@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,12 +26,12 @@ import (
 )
 
 type Handler struct {
-	store    *store.Store
-	manager  *session.Manager
-	authMw   *auth.Middleware
-	crypto   *auth.Crypto
-	bus      *events.Bus
-	cluster  *cluster.Cluster // 可为 nil（未启用集群）
+	store     *store.Store
+	manager   *session.Manager
+	authMw    *auth.Middleware
+	crypto    *auth.Crypto
+	bus       *events.Bus
+	cluster   *cluster.Cluster // 可为 nil（未启用集群）
 	scheduler *automation.Scheduler
 }
 
@@ -148,7 +148,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&body)
 	u, _ := h.store.GetUserByName(body.Name)
 	if u == nil || !auth.VerifyPassword(body.Password, u.PasswordHash) {
-		jsonErr(w,  401, "用户名或密码错误")
+		jsonErr(w, 401, "用户名或密码错误")
 		return
 	}
 	if !u.Enabled {
@@ -244,9 +244,14 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 		isAdmin := tc == nil || tc.Platform || tc.Role == "tenant_admin"
 		selfID := h.cluster.SelfID()
 		for _, rd := range h.cluster.RemoteDevices() {
-			if !isAdmin && !rd.VisibleTo(selfID) {
+			visible, readonly := rd.VisibleTo(selfID)
+			if !isAdmin && !visible {
 				continue
 			}
+			if isAdmin {
+				readonly = false
+			}
+			rd.Readonly = readonly
 			if keyword != "" && !strings.Contains(rd.Name, keyword) && !strings.Contains(rd.Description, keyword) {
 				continue
 			}

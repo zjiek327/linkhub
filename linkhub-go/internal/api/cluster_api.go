@@ -391,10 +391,14 @@ func (h *ClusterHandler) internalDirectory(w http.ResponseWriter, r *http.Reques
 				ID: c.ID, Kind: c.Kind, Name: c.Name, NodeID: c.NodeID, Enabled: c.Enabled, Params: c.Params,
 			})
 		}
+		grants := []cluster.DeviceGrantInfo{}
+		for _, g := range h.store.DeviceGrants(d.ID) {
+			grants = append(grants, cluster.DeviceGrantInfo{NodeID: g.NodeID, Readonly: g.Readonly})
+		}
+		visibility, ro := h.store.DeviceVisibility(d.ID)
 		out = append(out, cluster.RemoteDevice{
 			Device: d, Connections: rcs,
-			Visibility:      h.store.DeviceVisibility(d.ID),
-			AuthorizedNodes: h.store.DeviceAuthorizedNodes(d.ID),
+			Visibility: visibility, Grants: grants, Readonly: ro,
 		})
 	}
 	jsonOut(w, out)

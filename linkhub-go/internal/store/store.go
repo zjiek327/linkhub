@@ -191,6 +191,7 @@ func migrateTenants(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS device_authorized_nodes (
 		device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
 		node_id TEXT NOT NULL,
+		readonly BOOLEAN DEFAULT 0,
 		UNIQUE(device_id, node_id)
 	);`
 	if _, err := db.Exec(ts); err != nil {
@@ -210,6 +211,7 @@ func migrateTenants(db *sql.DB) error {
 		"audit_logs":      "ALTER TABLE audit_logs ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
 	}
 	cols["device_groups#node_id"] = "ALTER TABLE device_groups ADD COLUMN node_id TEXT DEFAULT ''"
+	cols["device_groups#readonly"] = "ALTER TABLE device_groups ADD COLUMN readonly BOOLEAN DEFAULT 0"
 	cols["device_groups#visibility"] = "ALTER TABLE device_groups ADD COLUMN visibility TEXT DEFAULT 'private'"
 	for table, ddl := range cols {
 		col := "tenant_id"

@@ -16,10 +16,10 @@ import (
 var maskAfter = [][]byte{[]byte("assword:"), []byte("PIN:")}
 
 type Client struct {
-	ID      string
-	Name    string
-	Queue   chan interface{} // []byte 终端数据 | map 控制消息
-	Writer  bool
+	ID     string
+	Name   string
+	Queue  chan interface{} // []byte 终端数据 | map 控制消息
+	Writer bool
 }
 
 type Session struct {
@@ -36,14 +36,14 @@ type Session struct {
 	// Done 会话终止（被关闭）后关闭，WS 处理器据此断开客户端
 	Done chan struct{}
 
-	mu       sync.RWMutex
-	clients  map[string]*Client
-	chats    []map[string]interface{} // 会话内聊天记录（仅内存，随会话消失）
-	closing  bool
-	ctx      context.Context
-	cancel   context.CancelFunc
-	store    *store.Store
-	masked   bool
+	mu      sync.RWMutex
+	clients map[string]*Client
+	chats   []map[string]interface{} // 会话内聊天记录（仅内存，随会话消失）
+	closing bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	store   *store.Store
+	masked  bool
 }
 
 type Manager struct {
@@ -358,14 +358,28 @@ func (s *Session) Write(clientID string, data []byte) (bool, error) {
 	return true, nil
 }
 
+// SubscribeObserver 以固定旁观者身份订阅（只读共享的跨节点终端）
+func (s *Session) SubscribeObserver(clientID, name string) (*Client, bool) {
+	return s.subscribeRaw(clientID, name, false)
+}
+
 func (s *Session) Subscribe(clientID, name string) (*Client, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c, ok := s.clients[clientID]; ok {
 		return c, c.Writer
 	}
+	return s.subscribeRaw(clientID, name, true)
+}
+
+func (s *Session) subscribeRaw(clientID, name string, canWrite bool) (*Client, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.clients[clientID]; ok {
+		return c, c.Writer
+	}
 	c := &Client{ID: clientID, Name: name, Queue: make(chan interface{}, 512)}
-	if s.WriterID == "" || s.WriterID == clientID {
+	if canWrite && (s.WriterID == "" || s.WriterID == clientID) {
 		s.WriterID = clientID
 		c.Writer = true
 	}

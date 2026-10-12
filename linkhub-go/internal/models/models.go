@@ -6,7 +6,7 @@ import "time"
 type Tenant struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
-	Code      string    `json:"code"` // 登录用标识
+	Code      string    `json:"code"`   // 登录用标识
 	Status    string    `json:"status"` // active / disabled
 	Remark    string    `json:"remark"`
 	CreatedAt time.Time `json:"created_at"`
@@ -14,14 +14,14 @@ type Tenant struct {
 
 // TenantMember 用户-租户关系（一个账号可加入多个租户，各租户角色可不同）
 type TenantMember struct {
-	ID        int64     `json:"id"`
-	TenantID  int64     `json:"tenant_id"`
-	TenantName string   `json:"tenant_name,omitempty"`
-	TenantCode string   `json:"tenant_code,omitempty"`
-	UserID    int64     `json:"user_id"`
-	UserName  string    `json:"user_name,omitempty"`
-	Role      string    `json:"role"` // tenant_admin / operator / viewer
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64     `json:"id"`
+	TenantID   int64     `json:"tenant_id"`
+	TenantName string    `json:"tenant_name,omitempty"`
+	TenantCode string    `json:"tenant_code,omitempty"`
+	UserID     int64     `json:"user_id"`
+	UserName   string    `json:"user_name,omitempty"`
+	Role       string    `json:"role"` // tenant_admin / operator / viewer
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // TenantNode 租户可用节点白名单（平台管理员分配；无记录=不限）
@@ -34,22 +34,23 @@ type DeviceGroup struct {
 	ID         int64     `json:"id"`
 	Name       string    `json:"name"`
 	ParentID   *int64    `json:"parent_id"`
-	NodeID     string    `json:"node_id,omitempty"`   // 组归属节点（空=本机旧数据）
+	NodeID     string    `json:"node_id,omitempty"`    // 组归属节点（空=本机旧数据）
 	Visibility string    `json:"visibility,omitempty"` // public / private
+	Readonly   bool      `json:"readonly,omitempty"`   // 公开组只读共享：他节点只能旁观终端
 	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Template struct {
-	ID                 int64                  `json:"id"`
-	Key                string                 `json:"key"`
-	Name               string                 `json:"name"`
-	Category           string                 `json:"category"`
-	Icon               string                 `json:"icon"`
-	Description        string                 `json:"description"`
-	Spec               map[string]interface{} `json:"spec"`
+	ID                 int64                    `json:"id"`
+	Key                string                   `json:"key"`
+	Name               string                   `json:"name"`
+	Category           string                   `json:"category"`
+	Icon               string                   `json:"icon"`
+	Description        string                   `json:"description"`
+	Spec               map[string]interface{}   `json:"spec"`
 	DefaultConnections []map[string]interface{} `json:"default_connections"`
-	Builtin            bool                   `json:"builtin"`
-	CreatedAt          time.Time              `json:"created_at"`
+	Builtin            bool                     `json:"builtin"`
+	CreatedAt          time.Time                `json:"created_at"`
 }
 
 type Device struct {
@@ -69,6 +70,8 @@ type Device struct {
 	Online     bool   `json:"online"`
 	NodeName   string `json:"node_name,omitempty"`
 	NodeOnline bool   `json:"node_online"`
+	// 跨节点只读共享：本节点只能旁观该设备终端
+	RemoteReadonly bool `json:"remote_readonly,omitempty"`
 }
 
 type ConnectionProfile struct {
@@ -132,26 +135,26 @@ type User struct {
 }
 
 type Node struct {
-	NodeID    string            `json:"node_id"`
-	Name      string            `json:"name"`
-	Address   string            `json:"address"`
-	Status    string            `json:"status"`
-	IsSelf    bool              `json:"is_self"`
-	LastSeen  time.Time         `json:"last_seen"`
+	NodeID    string                 `json:"node_id"`
+	Name      string                 `json:"name"`
+	Address   string                 `json:"address"`
+	Status    string                 `json:"status"`
+	IsSelf    bool                   `json:"is_self"`
+	LastSeen  time.Time              `json:"last_seen"`
 	Resources map[string]interface{} `json:"resources"`
 	// Via 非空表示间接节点：经该 node_id 的直连 peer 中转可达（跨网段桥接）
 	Via string `json:"via,omitempty"`
 }
 
 type ScheduledTask struct {
-	ID        int64                  `json:"id"`
-	Name      string                 `json:"name"`
-	Command   string                 `json:"command"`
+	ID        int64                    `json:"id"`
+	Name      string                   `json:"name"`
+	Command   string                   `json:"command"`
 	Targets   []map[string]interface{} `json:"targets"`
-	IntervalS int                    `json:"interval_s"`
-	Enabled   bool                   `json:"enabled"`
-	WaitMs    int                    `json:"wait_ms"`
-	LastRun   *time.Time             `json:"last_run"`
+	IntervalS int                      `json:"interval_s"`
+	Enabled   bool                     `json:"enabled"`
+	WaitMs    int                      `json:"wait_ms"`
+	LastRun   *time.Time               `json:"last_run"`
 	History   []map[string]interface{} `json:"history"`
-	CreatedAt time.Time              `json:"created_at"`
+	CreatedAt time.Time                `json:"created_at"`
 }

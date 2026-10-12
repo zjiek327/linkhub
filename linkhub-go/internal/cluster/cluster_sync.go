@@ -163,25 +163,31 @@ type RemoteConn struct {
 	Params  map[string]interface{} `json:"params,omitempty"`
 }
 
+type DeviceGrantInfo struct {
+	NodeID   string `json:"node_id"`
+	Readonly bool   `json:"readonly"`
+}
+
 type RemoteDevice struct {
 	models.Device
 	Connections []RemoteConn `json:"connections"`
-	// 跨节点共享：visibility=public 所有节点可见；private 时仅 authorized_nodes 内节点可见
-	Visibility      string   `json:"visibility,omitempty"`
-	AuthorizedNodes []string `json:"authorized_nodes,omitempty"`
+	// 跨节点共享：visibility=public 所有节点可见；private 时仅 grants 内节点可见
+	Visibility string            `json:"visibility,omitempty"`
+	Grants     []DeviceGrantInfo `json:"grants,omitempty"`
+	Readonly   bool              `json:"readonly,omitempty"` // public 组的只读共享开关
 }
 
-// VisibleTo 该远程设备对指定节点是否可见
-func (d RemoteDevice) VisibleTo(nodeID string) bool {
+// VisibleTo 该远程设备对指定节点是否可见；返回值 (可见, 只读)
+func (d RemoteDevice) VisibleTo(nodeID string) (bool, bool) {
 	if d.Visibility == "public" {
-		return true
+		return true, d.Readonly
 	}
-	for _, n := range d.AuthorizedNodes {
-		if n == nodeID {
-			return true
+	for _, g := range d.Grants {
+		if g.NodeID == nodeID {
+			return true, g.Readonly
 		}
 	}
-	return false
+	return false, false
 }
 
 // DirectorySyncLoop 每 30s 拉一次在线 peer 的目录 → 远程缓存

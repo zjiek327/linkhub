@@ -414,22 +414,48 @@ func (s *Store) CreateGroupFull(name, nodeID, visibility string) (*models.Device
 	return &models.DeviceGroup{ID: id, Name: name, NodeID: nodeID, Visibility: visibility}, nil
 }
 
-// SetGroupVisibility 公开/私密
-func (s *Store) SetGroupVisibility(groupID int64, visibility string) error {
-	return s.Exec(nil, `UPDATE device_groups SET visibility=? WHERE id=?`, visibility, groupID)
+// SetGroupVisibility 公开/私密 + 公开时的只读开关
+func (s *Store) SetGroupVisibility(groupID int64, visibility string, readonly bool) error {
+	return s.Exec(nil, `UPDATE device_groups SET visibility=?, readonly=? WHERE id=?`, visibility, readonly, groupID)
 }
 
 // SetDeviceAuthorizedNodes 私密组内设备的例外授权节点
-func (s *Store) SetDeviceAuthorizedNodes(deviceID int64, nodeIDs []string) error {
+func (s *Store) SetDeviceAuthorizedNodes(deviceID int64, grants []struct {
+	NodeID   string
+	Readonly bool
+}) error {
 	if _, err := s.db.Exec(`DELETE FROM device_authorized_nodes WHERE device_id=?`, deviceID); err != nil {
 		return err
 	}
-	for _, n := range nodeIDs {
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO device_authorized_nodes (device_id, node_id) VALUES (?,?)`, deviceID, n); err != nil {
+	for _, g := range grants {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO device_authorized_nodes (device_id, node_id, readonly) VALUES (?,?,?)`,
+			deviceID, g.NodeID, g.Readonly); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// DeviceGrant 设备对某节点的授权（含只读粒度）
+type DeviceGrant struct {
+	NodeID   string
+	Readonly bool
+}
+
+// DeviceGrants 设备授权明细
+func (s *Store) DeviceGrants(deviceID int64) []DeviceGrant {
+	rows, err := s.db.Query(`SELECT node_id, readonly FROM device_authorized_nodes WHERE device_id=?`, deviceID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []DeviceGrant
+	for rows.Next() {
+		var g DeviceGrant
+		rows.Scan(&g.NodeID, &g.Readonly)
+		out = append(out, g)
+	}
+	return out
 }
 
 // DeviceAuthorizedNodes 设备的例外授权节点列表
@@ -448,20 +474,22 @@ func (s *Store) DeviceAuthorizedNodes(deviceID int64) []string {
 	return out
 }
 
-// DeviceVisibility 计算设备的跨节点可见性：任一所属组公开 → public；无组/全私密 → private
-func (s *Store) DeviceVisibility(deviceID int64) string {
-	var pub int
-	s.db.QueryRow(`SELECT COUNT(*) FROM device_group_devices dgd JOIN device_groups g ON g.id=dgd.group_id
-		WHERE dgd.device_id=? AND g.visibility='public'`, deviceID).Scan(&pub)
-	if pub > 0 {
-		return "public"
+// DeviceVisibility 计算设备的跨节点可见性与只读：
+// 任一所属组公开 → public；public 且所有公开组都开了只读 → readonly=true
+func (s *Store) DeviceVisibility(deviceID int64) (string, bool) {
+	var pubAll, pubReadonly int
+	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN g.readonly THEN 1 ELSE 0 END),0)
+		FROM device_group_devices dgd JOIN device_groups g ON g.id=dgd.group_id
+		WHERE dgd.device_id=? AND g.visibility='public'`, deviceID).Scan(&pubAll, &pubReadonly)
+	if pubAll > 0 {
+		return "public", pubReadonly == pubAll
 	}
-	return "private"
+	return "private", false
 }
 
 // ListGroupsWithMeta 本节点组列表（含归属节点/可见性）
 func (s *Store) ListGroupsWithMeta(tenantID *int64) ([]models.DeviceGroup, error) {
-	q := `SELECT id,name,parent_id,node_id,visibility,created_at FROM device_groups`
+	q := `SELECT id,name,parent_id,node_id,visibility,readonly,created_at FROM device_groups`
 	args := []interface{}{}
 	if tenantID != nil {
 		q += " WHERE tenant_id=?"
@@ -477,14 +505,15 @@ func (s *Store) ListGroupsWithMeta(tenantID *int64) ([]models.DeviceGroup, error
 	for rows.Next() {
 		var g models.DeviceGroup
 		var nid, vis sql.NullString
+		var ro bool
 		var pid sql.NullInt64
-		if err := rows.Scan(&g.ID, &g.Name, &pid, &nid, &vis, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &pid, &nid, &vis, &ro, &g.CreatedAt); err != nil {
 			return nil, err
 		}
 		if pid.Valid {
 			g.ParentID = &pid.Int64
 		}
-		g.NodeID, g.Visibility = nid.String, vis.String
+		g.NodeID, g.Visibility, g.Readonly = nid.String, vis.String, ro
 		out = append(out, g)
 	}
 	return out, nil

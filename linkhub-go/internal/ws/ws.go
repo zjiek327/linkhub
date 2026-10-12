@@ -46,6 +46,12 @@ func (h *Handler) Terminal(w http.ResponseWriter, r *http.Request) {
 
 	clientID := r.URL.Query().Get("cid")
 	name := r.URL.Query().Get("name")
+	// observer=1：只读共享的跨节点终端，强制旁观（不占主控位）
+	if r.URL.Query().Get("observer") == "1" {
+		sess.SubscribeObserver(clientID, name)
+	} else {
+		sess.Subscribe(clientID, name)
+	}
 	client, _ := sess.Subscribe(clientID, name)
 	defer sess.Unsubscribe(clientID)
 

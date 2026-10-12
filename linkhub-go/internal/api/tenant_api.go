@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -471,17 +472,18 @@ func (h *Handler) setGroupSharing(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var body struct {
 		Visibility string `json:"visibility"`
+		Readonly   bool   `json:"readonly"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 	if body.Visibility != "public" && body.Visibility != "private" {
 		jsonErr(w, 400, "visibility 必须是 public/private")
 		return
 	}
-	if err := h.store.SetGroupVisibility(id, body.Visibility); err != nil {
+	if err := h.store.SetGroupVisibility(id, body.Visibility, body.Readonly); err != nil {
 		jsonErr(w, 500, err.Error())
 		return
 	}
-	auditLog(h, r, "group_sharing", "#"+strconv.FormatInt(id, 10), body.Visibility)
+	auditLog(h, r, "group_sharing", "#"+strconv.FormatInt(id, 10), body.Visibility+fmt.Sprintf("/readonly=%v", body.Readonly))
 	jsonOut(w, map[string]bool{"ok": true})
 }
 
@@ -511,19 +513,34 @@ func (h *Handler) groupSharingSummary(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deviceAuthorizedNodes(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "device_id"), 10, 64)
-	jsonOut(w, map[string]interface{}{"nodes": h.store.DeviceAuthorizedNodes(id)})
+	jsonOut(w, map[string]interface{}{"grants": h.store.DeviceGrants(id)})
 }
 
 func (h *Handler) setDeviceAuthorizedNodes(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "device_id"), 10, 64)
 	var body struct {
-		Nodes []string `json:"nodes"`
+		Grants []struct {
+			NodeID   string `json:"node_id"`
+			Readonly bool   `json:"readonly"`
+		} `json:"grants"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	if err := h.store.SetDeviceAuthorizedNodes(id, body.Nodes); err != nil {
+	grants := make([]struct {
+		NodeID   string
+		Readonly bool
+	}, len(body.Grants))
+	nodes := []string{}
+	for i, g := range body.Grants {
+		grants[i] = struct {
+			NodeID   string
+			Readonly bool
+		}{g.NodeID, g.Readonly}
+		nodes = append(nodes, g.NodeID)
+	}
+	if err := h.store.SetDeviceAuthorizedNodes(id, grants); err != nil {
 		jsonErr(w, 500, err.Error())
 		return
 	}
-	auditLog(h, r, "device_authorized_nodes", "#"+strconv.FormatInt(id, 10), strings.Join(body.Nodes, ","))
+	auditLog(h, r, "device_authorized_nodes", "#"+strconv.FormatInt(id, 10), strings.Join(nodes, ","))
 	jsonOut(w, map[string]bool{"ok": true})
 }

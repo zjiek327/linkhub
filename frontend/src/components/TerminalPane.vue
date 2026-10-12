@@ -68,12 +68,13 @@ import { settings, terminalThemeOf } from '../api/settings'
 import StatusBadge from './StatusBadge.vue'
 
 const { t } = useI18n()
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sessionId: number
   connId: number | null
-  remoteNode: string
-  displayName: string
-}>()
+  remoteNode?: string
+  displayName?: string
+  readonly?: boolean
+}>(), { remoteNode: '', displayName: '', readonly: false })
 const emit = defineEmits<{
   status: [s: { online: boolean; name?: string }]
   openNew: [payload: { id: number; connId?: number | null; remoteNode?: string; name?: string }]
@@ -273,7 +274,7 @@ function connectWs() {
   sessionDead = false
   closedAnnounced = false
   const nodeQ = props.remoteNode ? `&node=${props.remoteNode}` : ''
-  ws = new WebSocket(wsUrl(`/ws/terminal/${props.sessionId}?cid=${cid}&name=${myName}${nodeQ}`))
+  ws = new WebSocket(wsUrl(`/ws/terminal/${props.sessionId}?cid=${cid}&name=${myName}${nodeQ}${props.readonly ? '&observer=1' : ''}`))
   ws.binaryType = 'arraybuffer'
   ws.onopen = () => { status.value = 'online'; emit('status', { online: true, name: props.displayName }); term?.focus() }
   ws.onmessage = ev => {
