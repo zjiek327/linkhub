@@ -31,10 +31,12 @@ type TenantNode struct {
 }
 
 type DeviceGroup struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	ParentID  *int64    `json:"parent_id"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	ParentID   *int64    `json:"parent_id"`
+	NodeID     string    `json:"node_id,omitempty"`   // 组归属节点（空=本机旧数据）
+	Visibility string    `json:"visibility,omitempty"` // public / private
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Template struct {

@@ -399,3 +399,110 @@ func placeholders(n int) string {
 	}
 	return out
 }
+
+// ---------- 组共享（节点可见性） ----------
+// CreateGroupFull 建组（归属节点 + 可见性）
+func (s *Store) CreateGroupFull(name, nodeID, visibility string) (*models.DeviceGroup, error) {
+	var id int64
+	if visibility == "" {
+		visibility = "private"
+	}
+	err := s.Exec(&id, `INSERT INTO device_groups (name, node_id, visibility) VALUES (?,?,?)`, name, nodeID, visibility)
+	if err != nil {
+		return nil, err
+	}
+	return &models.DeviceGroup{ID: id, Name: name, NodeID: nodeID, Visibility: visibility}, nil
+}
+
+// SetGroupVisibility 公开/私密
+func (s *Store) SetGroupVisibility(groupID int64, visibility string) error {
+	return s.Exec(nil, `UPDATE device_groups SET visibility=? WHERE id=?`, visibility, groupID)
+}
+
+// SetDeviceAuthorizedNodes 私密组内设备的例外授权节点
+func (s *Store) SetDeviceAuthorizedNodes(deviceID int64, nodeIDs []string) error {
+	if _, err := s.db.Exec(`DELETE FROM device_authorized_nodes WHERE device_id=?`, deviceID); err != nil {
+		return err
+	}
+	for _, n := range nodeIDs {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO device_authorized_nodes (device_id, node_id) VALUES (?,?)`, deviceID, n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeviceAuthorizedNodes 设备的例外授权节点列表
+func (s *Store) DeviceAuthorizedNodes(deviceID int64) []string {
+	rows, err := s.db.Query(`SELECT node_id FROM device_authorized_nodes WHERE device_id=?`, deviceID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		rows.Scan(&n)
+		out = append(out, n)
+	}
+	return out
+}
+
+// DeviceVisibility 计算设备的跨节点可见性：任一所属组公开 → public；无组/全私密 → private
+func (s *Store) DeviceVisibility(deviceID int64) string {
+	var pub int
+	s.db.QueryRow(`SELECT COUNT(*) FROM device_group_devices dgd JOIN device_groups g ON g.id=dgd.group_id
+		WHERE dgd.device_id=? AND g.visibility='public'`, deviceID).Scan(&pub)
+	if pub > 0 {
+		return "public"
+	}
+	return "private"
+}
+
+// ListGroupsWithMeta 本节点组列表（含归属节点/可见性）
+func (s *Store) ListGroupsWithMeta(tenantID *int64) ([]models.DeviceGroup, error) {
+	q := `SELECT id,name,parent_id,node_id,visibility,created_at FROM device_groups`
+	args := []interface{}{}
+	if tenantID != nil {
+		q += " WHERE tenant_id=?"
+		args = append(args, *tenantID)
+	}
+	q += " ORDER BY id"
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.DeviceGroup{}
+	for rows.Next() {
+		var g models.DeviceGroup
+		var nid, vis sql.NullString
+		var pid sql.NullInt64
+		if err := rows.Scan(&g.ID, &g.Name, &pid, &nid, &vis, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		if pid.Valid {
+			g.ParentID = &pid.Int64
+		}
+		g.NodeID, g.Visibility = nid.String, vis.String
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// DeviceGroupsOf 设备所属组
+func (s *Store) DeviceGroupsOf(deviceID int64) []models.DeviceGroup {
+	rows, err := s.db.Query(`SELECT g.id, g.name, g.node_id, g.visibility FROM device_groups g
+		JOIN device_group_devices dgd ON dgd.group_id=g.id WHERE dgd.device_id=?`, deviceID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := []models.DeviceGroup{}
+	for rows.Next() {
+		var g models.DeviceGroup
+		rows.Scan(&g.ID, &g.Name, &g.NodeID, &g.Visibility)
+		out = append(out, g)
+	}
+	return out
+}

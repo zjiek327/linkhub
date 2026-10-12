@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"os"
 	"path/filepath"
 	"time"
@@ -186,6 +187,11 @@ func migrateTenants(db *sql.DB) error {
 		group_id INTEGER NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
 		device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
 		UNIQUE(group_id, device_id)
+	);
+	CREATE TABLE IF NOT EXISTS device_authorized_nodes (
+		device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+		node_id TEXT NOT NULL,
+		UNIQUE(device_id, node_id)
 	);`
 	if _, err := db.Exec(ts); err != nil {
 		return err
@@ -203,9 +209,16 @@ func migrateTenants(db *sql.DB) error {
 		"templates":       "ALTER TABLE templates ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
 		"audit_logs":      "ALTER TABLE audit_logs ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)",
 	}
+	cols["device_groups#node_id"] = "ALTER TABLE device_groups ADD COLUMN node_id TEXT DEFAULT ''"
+	cols["device_groups#visibility"] = "ALTER TABLE device_groups ADD COLUMN visibility TEXT DEFAULT 'private'"
 	for table, ddl := range cols {
+		col := "tenant_id"
+		if i := strings.Index(table, "#"); i >= 0 {
+			col = table[i+1:]
+			table = table[:i]
+		}
 		var cnt int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='tenant_id'`, table).Scan(&cnt); err == nil && cnt == 0 {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, col).Scan(&cnt); err == nil && cnt == 0 {
 			if _, err := db.Exec(ddl); err != nil {
 				return fmt.Errorf("%s 加列: %w", table, err)
 			}

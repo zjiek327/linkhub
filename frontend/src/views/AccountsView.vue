@@ -76,6 +76,36 @@
           </el-checkbox-group>
           <el-button style="margin-top:10px" type="primary" size="small" @click="saveDevices">保存设备</el-button>
         </el-tab-pane>
+        <el-tab-pane label="跨节点共享">
+          <div style="margin-bottom:10px">
+            <span style="margin-right:8px">组可见性：</span>
+            <el-radio-group v-model="sharing" size="small">
+              <el-radio-button value="private">私密（仅本节点）</el-radio-button>
+              <el-radio-button value="public">公开（全集群可见）</el-radio-button>
+            </el-radio-group>
+            <el-button size="small" type="primary" style="margin-left:10px" @click="saveSharing">保存</el-button>
+          </div>
+          <el-alert v-if="sharing === 'private'" type="info" :closable="false" style="margin-bottom:8px">
+            私密组内的设备可单独授权给指定节点（该节点用户即可见可用）
+          </el-alert>
+          <el-table v-if="sharing === 'private'" :data="sharingDevices" size="small">
+            <el-table-column label="设备" min-width="120">
+              <template #default="{ row }">{{ deviceName(row.id) }}</template>
+            </el-table-column>
+            <el-table-column label="授权节点">
+              <template #default="{ row }">
+                <el-select v-model="row.authorized_nodes" multiple size="small" style="width:100%" placeholder="不授权=仅本节点">
+                  <el-option v-for="n in clusterNodes" :key="n.node_id" :label="n.name" :value="n.node_id" :disabled="n.is_self" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column width="90">
+              <template #default="{ row }">
+                <el-button size="small" @click="saveGrant(row)">保存</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
       </el-tabs>
     </el-dialog>
 
@@ -113,6 +143,9 @@ const current = ref<any>(null)
 const members = ref<any[]>([])
 const addMemberId = ref<number | ''>('')
 const selectedDevices = ref<number[]>([])
+const sharing = ref('private')
+const sharingDevices = ref<{ id: number; authorized_nodes: string[] }[]>([])
+const clusterNodes = ref<ClusterNode[]>([])
 const newUser = reactive({ name: '', password: '', role: 'operator' })
 
 function roleLabel(role: string) {
@@ -124,6 +157,7 @@ async function load() {
   groups.value = await api.deviceGroups()
   const d = await api.devices({ size: 500 })
   allDevices.value = d.items
+  clusterNodes.value = await api.clusterNodes()
 }
 
 async function openGroup(row: any) {
@@ -131,7 +165,27 @@ async function openGroup(row: any) {
   const g = await api.deviceGroup(row.id)
   members.value = g.members ?? []
   selectedDevices.value = (g.device_ids ?? []).map(Number)
+  // 跨节点共享
+  const summary = await api.groupSharingSummary()
+  const mine = summary.find((x: any) => x.id === row.id)
+  sharing.value = mine?.visibility === 'public' ? 'public' : 'private'
+  sharingDevices.value = (mine?.devices ?? []).map((d: any) => ({ id: d.id, authorized_nodes: d.authorized_nodes ?? [] }))
+  clusterNodes.value = await api.clusterNodes()
   groupDlg.value = true
+}
+
+function deviceName(id: number) {
+  return allDevices.value.find(d => d.id === id)?.name ?? `#${id}`
+}
+
+async function saveSharing() {
+  await api.setGroupSharing(current.value.id, sharing.value)
+  ElMessage.success('组可见性已保存')
+}
+
+async function saveGrant(row: any) {
+  await api.setDeviceAuthorizedNodes(row.id, row.authorized_nodes)
+  ElMessage.success('授权节点已保存')
 }
 
 async function addMember() {

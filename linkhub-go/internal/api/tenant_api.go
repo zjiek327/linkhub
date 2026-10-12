@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -328,8 +329,18 @@ func (h *Handler) RegisterDeviceGroupRoutes(r chi.Router) {
 				r.With(h.authMw.RequireTenantAdminHTTP).Delete("/members/{user_id}", h.removeGroupMember)
 				r.With(h.authMw.RequireTenantAdminHTTP).Put("/devices", h.setGroupDevices)
 			})
+			// 组跨节点共享（组可见性 + 设备授权节点）
+			r.With(h.authMw.RequireTenantAdminHTTP).Put("/{id}/sharing", h.setGroupSharing)
+			r.Get("/sharing/summary", h.groupSharingSummary)
 			// 用户视角：自己的组与可见设备（所有登录用户）
 			r.Get("/mine", h.myGroups)
+		})
+	})
+	r.Group(func(gr chi.Router) {
+		gr.Use(h.authMw.User)
+		gr.Route("/api/device-grants", func(gr chi.Router) {
+			gr.With(h.authMw.RequireTenantAdminHTTP).Get("/{device_id}/authorized-nodes", h.deviceAuthorizedNodes)
+			gr.With(h.authMw.RequireTenantAdminHTTP).Put("/{device_id}/authorized-nodes", h.setDeviceAuthorizedNodes)
 		})
 	})
 }
@@ -454,4 +465,65 @@ func (h *Handler) myGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, groups)
+}
+
+func (h *Handler) setGroupSharing(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	var body struct {
+		Visibility string `json:"visibility"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Visibility != "public" && body.Visibility != "private" {
+		jsonErr(w, 400, "visibility 必须是 public/private")
+		return
+	}
+	if err := h.store.SetGroupVisibility(id, body.Visibility); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "group_sharing", "#"+strconv.FormatInt(id, 10), body.Visibility)
+	jsonOut(w, map[string]bool{"ok": true})
+}
+
+// groupSharingSummary 本节点各组的设备数/可见性/各设备授权情况（管理页一次性拉取）
+func (h *Handler) groupSharingSummary(w http.ResponseWriter, r *http.Request) {
+	groups, err := h.store.ListGroupsWithMeta(h.tenantFilter(r))
+	if err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	out := []map[string]interface{}{}
+	for _, g := range groups {
+		deviceIDs := h.store.GroupDevices(g.ID)
+		devs := []map[string]interface{}{}
+		for _, did := range deviceIDs {
+			devs = append(devs, map[string]interface{}{
+				"id": did, "authorized_nodes": h.store.DeviceAuthorizedNodes(did),
+			})
+		}
+		out = append(out, map[string]interface{}{
+			"id": g.ID, "name": g.Name, "node_id": g.NodeID,
+			"visibility": g.Visibility, "devices": devs,
+		})
+	}
+	jsonOut(w, out)
+}
+
+func (h *Handler) deviceAuthorizedNodes(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "device_id"), 10, 64)
+	jsonOut(w, map[string]interface{}{"nodes": h.store.DeviceAuthorizedNodes(id)})
+}
+
+func (h *Handler) setDeviceAuthorizedNodes(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "device_id"), 10, 64)
+	var body struct {
+		Nodes []string `json:"nodes"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if err := h.store.SetDeviceAuthorizedNodes(id, body.Nodes); err != nil {
+		jsonErr(w, 500, err.Error())
+		return
+	}
+	auditLog(h, r, "device_authorized_nodes", "#"+strconv.FormatInt(id, 10), strings.Join(body.Nodes, ","))
+	jsonOut(w, map[string]bool{"ok": true})
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -235,10 +236,17 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 			devices[i].NodeName = "本机"
 		}
 	}
-	// 聚合远程节点目录（集群模式）
+	// 聚合远程节点目录（集群模式）：按组共享规则过滤
+	// （公开组设备全集群可见；私密组设备仅被授权节点可见；管理员不受限）
 	items := devices
 	if h.cluster != nil {
+		tc := auth.TenantFrom(r.Context())
+		isAdmin := tc == nil || tc.Platform || tc.Role == "tenant_admin"
+		selfID := h.cluster.SelfID()
 		for _, rd := range h.cluster.RemoteDevices() {
+			if !isAdmin && !rd.VisibleTo(selfID) {
+				continue
+			}
 			if keyword != "" && !strings.Contains(rd.Name, keyword) && !strings.Contains(rd.Description, keyword) {
 				continue
 			}
@@ -360,11 +368,17 @@ func (h *Handler) selfNodeID() string {
 }
 
 func (h *Handler) createDevice(w http.ResponseWriter, r *http.Request) {
+	raw, _ := io.ReadAll(r.Body)
 	var d models.Device
-	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+	if err := json.Unmarshal(raw, &d); err != nil {
 		jsonErr(w, 400, "请求体错误")
 		return
 	}
+	var extra struct {
+		GroupIDs []int64 `json:"group_ids"`
+	}
+	json.Unmarshal(raw, &extra)
+	groupIDs := extra.GroupIDs
 	d.NodeID = h.selfNodeID()
 	d.TenantID = h.tenantFilterForCreate(r)
 	if d.TenantID != nil && !h.store.TenantAllowedNode(*d.TenantID, d.NodeID) {
@@ -374,6 +388,9 @@ func (h *Handler) createDevice(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.CreateDevice(&d); err != nil {
 		jsonErr(w, 500, err.Error())
 		return
+	}
+	for _, gid := range groupIDs {
+		h.store.Exec(nil, `INSERT OR IGNORE INTO device_group_devices (group_id, device_id) VALUES (?,?)`, gid, d.ID)
 	}
 	h.publishDeviceChanged(d.ID)
 	auditLog(h, r, "device_create", d.Name, "")

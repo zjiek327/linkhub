@@ -166,6 +166,22 @@ type RemoteConn struct {
 type RemoteDevice struct {
 	models.Device
 	Connections []RemoteConn `json:"connections"`
+	// 跨节点共享：visibility=public 所有节点可见；private 时仅 authorized_nodes 内节点可见
+	Visibility      string   `json:"visibility,omitempty"`
+	AuthorizedNodes []string `json:"authorized_nodes,omitempty"`
+}
+
+// VisibleTo 该远程设备对指定节点是否可见
+func (d RemoteDevice) VisibleTo(nodeID string) bool {
+	if d.Visibility == "public" {
+		return true
+	}
+	for _, n := range d.AuthorizedNodes {
+		if n == nodeID {
+			return true
+		}
+	}
+	return false
 }
 
 // DirectorySyncLoop 每 30s 拉一次在线 peer 的目录 → 远程缓存

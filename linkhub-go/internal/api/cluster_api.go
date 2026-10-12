@@ -391,7 +391,11 @@ func (h *ClusterHandler) internalDirectory(w http.ResponseWriter, r *http.Reques
 				ID: c.ID, Kind: c.Kind, Name: c.Name, NodeID: c.NodeID, Enabled: c.Enabled, Params: c.Params,
 			})
 		}
-		out = append(out, cluster.RemoteDevice{Device: d, Connections: rcs})
+		out = append(out, cluster.RemoteDevice{
+			Device: d, Connections: rcs,
+			Visibility:      h.store.DeviceVisibility(d.ID),
+			AuthorizedNodes: h.store.DeviceAuthorizedNodes(d.ID),
+		})
 	}
 	jsonOut(w, out)
 }
