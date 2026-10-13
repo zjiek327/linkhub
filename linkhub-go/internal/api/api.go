@@ -754,7 +754,10 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) closeSession(w http.ResponseWriter, r *http.Request) {
 	id, _ := paramID(r, "id")
-	h.manager.Close(id)
+	if err := h.manager.Close(id); err != nil {
+		// 运行时会话已不存在（僵尸行）：直接落库关闭，让"关闭"按钮始终有效
+		h.store.Exec(nil, `UPDATE sessions SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=? AND closed_at IS NULL`, id)
+	}
 	jsonOut(w, map[string]bool{"closed": true})
 }
 

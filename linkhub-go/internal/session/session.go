@@ -101,6 +101,8 @@ func (m *Manager) Open(connID int64, kind string, params map[string]interface{},
 
 	conn, err := connector.Create(kind, params)
 	if err != nil {
+		// 会话行已落库（connecting），构造失败必须就地关闭，否则残留僵尸行
+		m.store.Exec(nil, `UPDATE sessions SET status='closed', closed_at=CURRENT_TIMESTAMP, last_error=? WHERE id=?`, err.Error(), sessID)
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -203,7 +205,11 @@ func (s *Session) run(m *Manager) {
 				m.Close(s.ID)
 				return
 			}
-			time.Sleep(delay)
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 			delay = min(delay*2, 30*time.Second)
 			continue
 		}
@@ -216,7 +222,11 @@ func (s *Session) run(m *Manager) {
 				m.Close(s.ID)
 				return
 			}
-			time.Sleep(delay)
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 			delay = min(delay*2, 30*time.Second)
 		}
 	}
@@ -321,6 +331,10 @@ func (s *Session) log(m *Manager, dir string, data []byte) {
 }
 
 func (s *Session) setStatus(m *Manager, status, errMsg string) {
+	// 会话已关闭：任何迟到的状态写入都会把 closed 复活成 online/error（僵尸会话），直接丢弃
+	if s.ctx.Err() != nil {
+		return
+	}
 	s.mu.Lock()
 	s.Status, s.LastError = status, errMsg
 	s.mu.Unlock()
