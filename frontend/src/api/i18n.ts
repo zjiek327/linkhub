@@ -39,6 +39,7 @@ const zh = {
     disconnected: '连接已断开', reconnectToRecover: '点「↻ 重连」恢复',
     chatTitle: '会话聊天', chatPlaceholder: '发送消息，所有人可见…', chatEmpty: '暂无消息，打个招呼吧',
     send: '发送', chatTip: '本终端会话内的协作聊天（多端可见，仅会话内有效）',
+    chatMinimize: '收起', chatMe: '我',
     sessionClosed: '会话已被关闭，点「↻ 重连」重新打开',
   },
   settings: {
@@ -105,6 +106,7 @@ const en: typeof zh = {
     disconnected: 'Disconnected', reconnectToRecover: 'click "↻ Reconnect" to recover',
     chatTitle: 'Session Chat', chatPlaceholder: 'Message everyone in this session…', chatEmpty: 'No messages yet. Say hi!',
     send: 'Send', chatTip: 'Collaboration chat inside this terminal session (visible to all, session-scoped)',
+    chatMinimize: 'Minimize', chatMe: 'Me',
     sessionClosed: 'Session closed. Click "↻ Reconnect" to reopen',
   },
   settings: {

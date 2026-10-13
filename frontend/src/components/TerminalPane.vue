@@ -33,34 +33,50 @@
     </div>
     <div ref="termEl" class="term" />
 
-    <!-- 会话内协作聊天：悬浮可拖动，收起为气泡+未读角标+最新一条预览 -->
+    <!-- 会话内协作聊天：悬浮可拖动；收起为渐变气泡+未读角标+最新消息预览卡 -->
     <div v-if="chatVisible" class="chat-widget" :style="{ left: chatPos.x + 'px', top: chatPos.y + 'px' }">
-      <template v-if="chatOpen">
-        <div class="chat-head" @mousedown.prevent="chatDragStart">
-          <span>💬 {{ $t('terminal.chatTitle') }}</span>
-          <span class="chat-min" title="收起" @click="chatOpen = false">—</span>
-        </div>
-        <div ref="chatListEl" class="chat-body">
-          <div v-for="(m, i) in chatMsgs" :key="i" class="chat-msg" :class="{ me: m.from === cid }">
-            <div class="chat-meta">{{ m.from === cid ? '我' : m.name }} · {{ m.ts }}</div>
-            <div class="chat-text">{{ m.text }}</div>
+      <Transition name="chat-pop">
+        <div v-if="chatOpen" class="chat-panel">
+          <div class="chat-head" @mousedown.prevent="chatDragStart">
+            <span class="chat-head-title">
+              <el-icon><ChatDotRound /></el-icon>
+              {{ $t('terminal.chatTitle') }}
+              <span v-if="chatUnread" class="chat-head-unread">{{ chatUnread > 9 ? '9+' : chatUnread }}</span>
+            </span>
+            <span class="chat-min" :title="$t('terminal.chatMinimize')" @click="chatOpen = false">
+              <el-icon><Minus /></el-icon>
+            </span>
           </div>
-          <div v-if="!chatMsgs.length" class="chat-empty">{{ $t('terminal.chatEmpty') }}</div>
+          <div ref="chatListEl" class="chat-body">
+            <div v-for="(m, i) in chatMsgs" :key="i" class="chat-msg" :class="{ me: m.from === cid }">
+              <div class="chat-meta">{{ m.from === cid ? $t('terminal.chatMe') : m.name }} · {{ m.ts }}</div>
+              <div class="chat-text">{{ m.text }}</div>
+            </div>
+            <div v-if="!chatMsgs.length" class="chat-empty">{{ $t('terminal.chatEmpty') }}</div>
+          </div>
+          <div class="chat-input">
+            <el-input v-model="chatDraft" size="small" :placeholder="$t('terminal.chatPlaceholder')"
+                      maxlength="500" @keydown.enter.prevent="sendChat" />
+            <button class="chat-send" :disabled="!chatDraft.trim()" :title="$t('terminal.send')" @click="sendChat">
+              <el-icon><Promotion /></el-icon>
+            </button>
+          </div>
         </div>
-        <div class="chat-input">
-          <el-input v-model="chatDraft" size="small" :placeholder="$t('terminal.chatPlaceholder')"
-                    maxlength="500" @keydown.enter.prevent="sendChat" />
-          <el-button size="small" type="primary" @click="sendChat">{{ $t('terminal.send') }}</el-button>
+      </Transition>
+      <Transition name="chat-pop">
+        <div v-if="!chatOpen" class="chat-fab-row">
+          <Transition name="chat-fade">
+            <div v-if="lastChat" class="chat-preview" @click="chatClick">
+              <span class="chat-preview-name">{{ lastChat.from === cid ? $t('terminal.chatMe') : lastChat.name }}</span>
+              <span class="chat-preview-text">{{ lastChat.text }}</span>
+            </div>
+          </Transition>
+          <button class="chat-fab" :title="$t('terminal.chatTip')" @mousedown.prevent="chatDragStart" @click="chatClick">
+            <el-icon><ChatDotRound /></el-icon>
+            <span v-if="chatUnread" class="chat-badge">{{ chatUnread > 9 ? '9+' : chatUnread }}</span>
+          </button>
         </div>
-      </template>
-      <template v-else>
-        <div class="chat-bubble" :title="$t('terminal.chatTip')" @mousedown.prevent="chatDragStart" @click="chatClick">
-          💬<span v-if="chatUnread" class="chat-badge">{{ chatUnread > 9 ? '9+' : chatUnread }}</span>
-        </div>
-        <div v-if="lastChat" class="chat-preview" @click="chatClick">
-          <b>{{ lastChat.from === cid ? '我' : lastChat.name }}:</b> {{ lastChat.text }}
-        </div>
-      </template>
+      </Transition>
     </div>
   </div>
 </template>
@@ -68,6 +84,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElButton, ElMessage, ElNotification } from 'element-plus'
+import { ChatDotRound, Minus, Promotion } from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -387,30 +404,73 @@ onUnmounted(() => {
 .bar-toggle:hover { color: var(--lh-fg); background: rgba(128,128,128,.15); }
 .bar-min { padding: 3px 10px; justify-content: flex-end; }
 .term { flex: 1; padding: 6px; overflow: hidden; }
-/* ---------- 会话聊天 ---------- */
+/* ---------- 会话聊天（跟随主题强调色） ---------- */
 .pane { position: relative; }
-.chat-widget { position: absolute; z-index: 30; width: 270px; }
-.chat-bubble { width: 46px; height: 46px; border-radius: 50%; background: #1f6feb; color: #fff;
+.chat-widget { position: absolute; z-index: 30; width: 300px; font-family: inherit; }
+
+/* 收起态：渐变圆钮 + 未读角标 + 预览卡 */
+.chat-fab-row { display: flex; align-items: center; gap: 8px; }
+.chat-fab { position: relative; width: 46px; height: 46px; border: none; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0,0,0,.55); user-select: none; }
-.chat-bubble:hover { background: #388bfd; }
-.chat-badge { position: absolute; top: -5px; right: -5px; background: #f56c6c; color: #fff;
-  font-size: 11px; line-height: 18px; border-radius: 9px; padding: 0 5px; font-weight: 600; }
-.chat-preview { position: absolute; left: 54px; top: 4px; background: #161616; color: #cfd3d6;
-  border: 1px solid #333; border-radius: 8px; padding: 5px 9px; font-size: 12px; max-width: 230px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-.chat-head { background: #1f6feb; color: #fff; padding: 6px 10px; font-size: 12px; cursor: move;
-  display: flex; justify-content: space-between; align-items: center; user-select: none;
-  border-radius: 8px 8px 0 0; }
-.chat-min { cursor: pointer; padding: 0 4px; opacity: .85; }
-.chat-min:hover { opacity: 1; }
-.chat-body { background: rgba(22,22,22,.96); height: 210px; overflow-y: auto; padding: 8px; }
-.chat-msg { margin-bottom: 6px; }
+  color: #fff; background: linear-gradient(135deg, rgba(255,255,255,.16), rgba(0,0,0,.26)), var(--lh-accent);
+  box-shadow: 0 4px 18px rgba(0,0,0,.45);
+  transition: transform .15s ease, box-shadow .15s ease; }
+.chat-fab:hover { transform: scale(1.07); box-shadow: 0 6px 22px rgba(0,0,0,.5); }
+.chat-fab:active { transform: scale(.97); }
+.chat-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; background: linear-gradient(135deg, #ff6b60, #e0483f); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+  box-shadow: 0 0 0 2px var(--lh-workbench-bg); }
+.chat-preview { max-width: 236px; padding: 7px 11px; border-radius: 10px; cursor: pointer;
+  background: var(--lh-panel-bg);
+  border: 1px solid var(--lh-panel-border); backdrop-filter: blur(8px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.35); font-size: 12px;
+  display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.chat-preview:hover { border-color: var(--lh-accent); }
+.chat-preview-name { color: var(--lh-accent); font-weight: 600; }
+.chat-preview-text { color: var(--lh-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 展开态：面板 */
+.chat-panel { width: 300px; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--lh-panel-border);
+  box-shadow: 0 10px 36px rgba(0,0,0,.5); }
+.chat-head { height: 38px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between;
+  cursor: move; user-select: none; color: #fff;
+  background: linear-gradient(135deg, rgba(255,255,255,.16), rgba(0,0,0,.26)), var(--lh-accent); }
+.chat-head-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.chat-head-unread { min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: rgba(255,255,255,.25);
+  font-size: 11px; line-height: 17px; text-align: center; font-weight: 700; }
+.chat-min { cursor: pointer; display: flex; opacity: .8; padding: 2px; border-radius: 4px; }
+.chat-min:hover { opacity: 1; background: rgba(255,255,255,.15); }
+.chat-body { height: 230px; overflow-y: auto; padding: 10px;
+  background: var(--lh-workbench-bg);
+  backdrop-filter: blur(10px); }
+.chat-body::-webkit-scrollbar { width: 6px; }
+.chat-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 3px; }
+.chat-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.25); }
+.chat-msg { margin-bottom: 8px; }
 .chat-msg.me { text-align: right; }
-.chat-meta { font-size: 10px; color: #8a8f99; margin-bottom: 1px; }
-.chat-text { font-size: 12px; color: #e8e8e8; background: #2a2a2a; display: inline-block;
-  padding: 4px 9px; border-radius: 7px; max-width: 85%; word-break: break-word; text-align: left; }
-.chat-msg.me .chat-text { background: #1f6feb; }
-.chat-empty { color: #666; font-size: 12px; text-align: center; padding-top: 80px; }
-.chat-input { display: flex; gap: 6px; padding: 6px; background: #161616; border-radius: 0 0 8px 8px; }
+.chat-meta { font-size: 10px; color: var(--lh-muted); margin-bottom: 2px; }
+.chat-text { display: inline-block; max-width: 82%; padding: 6px 10px; font-size: 12px; line-height: 1.5;
+  text-align: left; word-break: break-word; color: var(--lh-fg);
+  background: rgba(255,255,255,.07);
+  border: 1px solid var(--lh-panel-border); border-radius: 10px 10px 10px 3px; }
+.chat-msg.me .chat-text { background: var(--lh-accent); border-color: transparent; color: #fff;
+  border-radius: 10px 10px 3px 10px; }
+.chat-empty { color: var(--lh-muted); font-size: 12px; text-align: center; padding-top: 92px; }
+.chat-input { display: flex; align-items: center; gap: 8px; padding: 8px;
+  background: var(--lh-panel-bg); border-top: 1px solid var(--lh-panel-border); }
+.chat-input :deep(.el-input__wrapper) { border-radius: 16px; box-shadow: 0 0 0 1px var(--lh-panel-border) inset; }
+.chat-send { flex-shrink: 0; width: 30px; height: 30px; border: none; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px;
+  background: var(--lh-accent); transition: transform .12s ease, opacity .12s ease; }
+.chat-send:hover:not(:disabled) { transform: scale(1.08); }
+.chat-send:disabled { opacity: .35; cursor: default; }
+
+/* 进出场动画 */
+.chat-pop-enter-active { transition: opacity .16s ease, transform .18s cubic-bezier(.34,1.5,.64,1); }
+.chat-pop-leave-active { transition: opacity .12s ease, transform .12s ease; }
+.chat-pop-enter-from, .chat-pop-leave-to { opacity: 0; transform: translateY(10px) scale(.94); }
+.chat-fade-enter-active, .chat-fade-leave-active { transition: opacity .15s ease, transform .15s ease; }
+.chat-fade-enter-from, .chat-fade-leave-to { opacity: 0; transform: translateX(-6px); }
 </style>
