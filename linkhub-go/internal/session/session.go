@@ -378,11 +378,7 @@ func (s *Session) SubscribeObserver(clientID, name string) (*Client, bool) {
 }
 
 func (s *Session) Subscribe(clientID, name string) (*Client, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if c, ok := s.clients[clientID]; ok {
-		return c, c.Writer
-	}
+	// subscribeRaw 内部自行加锁（此处不可持锁调用，RWMutex 同 goroutine 重入会自死锁）
 	return s.subscribeRaw(clientID, name, true)
 }
 
