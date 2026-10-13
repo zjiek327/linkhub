@@ -21,6 +21,15 @@
       <el-tooltip content="仅写入者或所属节点用户可关闭；旁观者只能观看" placement="bottom">
         <el-button v-if="amWriter || !remoteNode" size="small" type="danger" plain :disabled="status === 'closed'" @click="close">{{ $t('terminal.closeSession') }}</el-button>
       </el-tooltip>
+      <span style="flex:1" />
+      <el-tooltip :content="barVisible ? '收起功能区' : '展开功能区'" placement="bottom">
+        <span class="bar-toggle" @click="toggleBar"><el-icon><ArrowUp v-if="barVisible" /><ArrowDown v-else /></el-icon></span>
+      </el-tooltip>
+    </div>
+    <div v-if="!barVisible" class="bar bar-min">
+      <el-tooltip content="展开功能区" placement="bottom">
+        <span class="bar-toggle" @click="toggleBar"><el-icon><ArrowDown /></el-icon></span>
+      </el-tooltip>
     </div>
     <div ref="termEl" class="term" />
 
@@ -94,6 +103,13 @@ let stopWatch: (() => void) | null = null
 let sizeSynced = false
 let sessionDead = false
 let closedAnnounced = false
+const barVisible = ref(settings.terminal.toolbarVisible)
+function toggleBar() {
+  barVisible.value = !barVisible.value
+  settings.terminal.toolbarVisible = barVisible.value
+  nextTick(() => paneFit())
+}
+function paneFit() { fit?.fit() }
 const encoder = new TextEncoder()
 
 const cid = (() => {
@@ -362,10 +378,14 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.pane { display: flex; flex-direction: column; height: 100%; background: #0c0c0c; }
-.bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: #1d1d1d; color: #ddd; }
+.pane { display: flex; flex-direction: column; height: 100%; background: var(--lh-workbench-bg); }
+.bar { display: flex; align-items: center; gap: 12px; padding: 7px 14px; background: var(--lh-panel-bg);
+  color: var(--lh-fg); border-bottom: 1px solid var(--lh-panel-border); }
 .bar .title { font-weight: 600; }
 .bar .err { color: #f56c6c; font-size: 12px; }
+.bar-toggle { cursor: pointer; color: var(--lh-muted); display: flex; align-items: center; padding: 2px; border-radius: 4px; }
+.bar-toggle:hover { color: var(--lh-fg); background: rgba(128,128,128,.15); }
+.bar-min { padding: 3px 10px; justify-content: flex-end; }
 .term { flex: 1; padding: 6px; overflow: hidden; }
 /* ---------- 会话聊天 ---------- */
 .pane { position: relative; }

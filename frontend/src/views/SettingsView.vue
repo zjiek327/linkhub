@@ -10,12 +10,17 @@
             <el-radio-button value="en">English</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item :label="$t('settings.themeMode')">
-          <el-radio-group v-model="settings.themeMode">
-            <el-radio-button value="system">{{ $t('settings.system') }}</el-radio-button>
-            <el-radio-button value="light">{{ $t('settings.light') }}</el-radio-button>
-            <el-radio-button value="dark">{{ $t('settings.dark') }}</el-radio-button>
-          </el-radio-group>
+        <el-form-item label="界面风格">
+          <div class="style-presets">
+            <div v-for="(p, key) in STYLE_PRESETS" :key="key" class="style-preset"
+                 :class="{ active: settings.stylePreset === key }" @click="setPreset(key as any)">
+              <span class="sw" :style="{ background: p.vars['--lh-sidebar-bg'] }">
+                <i :style="{ background: p.vars['--lh-accent'] }" />
+                <b :style="{ background: p.vars['--lh-panel-bg'], borderColor: p.vars['--lh-panel-border'] }" />
+              </span>
+              <span class="name">{{ p.label }}</span>
+            </div>
+          </div>
         </el-form-item>
       </el-form>
     </el-card>
@@ -90,7 +95,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { FONT_FAMILIES, TERMINAL_THEMES, settings, terminalThemeOf } from '../api/settings'
+import { FONT_FAMILIES, TERMINAL_THEMES, settings, terminalThemeOf, STYLE_PRESETS, setStylePreset, type StylePresetKey } from '../api/settings'
 import { http } from '../api'
 
 const previewStyle = computed(() => ({
@@ -122,6 +127,11 @@ async function saveIfaces() {
   } finally { saving.value = false }
 }
 
+function setPreset(key: StylePresetKey) {
+  setStylePreset(key)
+  ElMessage.success(`已切换为「${STYLE_PRESETS[key].label}」风格`)
+}
+
 onMounted(loadIfaces)
 </script>
 
@@ -134,4 +144,16 @@ onMounted(loadIfaces)
 .hint { font-size: 12px; color: var(--el-text-color-secondary); margin-left: 10px; line-height: 1.4; }
 .iface { padding: 4px 0; }
 .mono { font-family: monospace; }
+/* ---------- 风格预设选择 ---------- */
+.style-presets { display: flex; gap: 10px; flex-wrap: wrap; }
+.style-preset { display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer;
+  padding: 8px 10px; border: 2px solid var(--el-border-color); border-radius: 8px; width: 84px; }
+.style-preset:hover { border-color: var(--el-color-primary-light-5); }
+.style-preset.active { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.style-preset .sw { width: 56px; height: 34px; border-radius: 6px; position: relative; display: block;
+  box-shadow: inset 0 0 0 1px rgba(128,128,128,.25); }
+.style-preset .sw i { position: absolute; left: 6px; top: 6px; width: 14px; height: 14px; border-radius: 50%; display: block; }
+.style-preset .sw b { position: absolute; left: 26px; top: 9px; width: 24px; height: 8px; border-radius: 3px;
+  border: 1px solid; display: block; }
+.style-preset .name { font-size: 12px; }
 </style>

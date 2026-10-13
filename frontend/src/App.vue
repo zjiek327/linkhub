@@ -6,8 +6,8 @@
         <span v-if="!collapsed">灵枢 LinkHub<br /><small>连连 · 设备连接平台</small></span>
       </div>
       <el-menu :default-active="$route.path" router :collapse="collapsed" :collapse-transition="false"
-               background-color="#001529" text-color="#a6adb4" active-text-color="#fff"
-               style="border-right:none">
+               :background-color="pal['--lh-sidebar-bg']" :text-color="pal['--lh-sidebar-fg']"
+               :active-text-color="pal['--lh-accent']" style="border-right:none">
         <el-menu-item index="/"><el-icon><Monitor /></el-icon><template #title>{{ $t('menu.dashboard') }}</template></el-menu-item>
         <el-menu-item index="/devices"><el-icon><Cpu /></el-icon><template #title>{{ $t('menu.devices') }}</template></el-menu-item>
         <el-menu-item index="/templates"><el-icon><Files /></el-icon><template #title>{{ $t('menu.templates') }}</template></el-menu-item>
@@ -47,8 +47,17 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { User, Monitor, Cpu, Files, Connection, Setting, UserFilled, VideoPlay, Fold, Expand, OfficeBuilding } from '@element-plus/icons-vue'
 import { api, setToken, type Me } from './api'
-import { settings } from './api/settings'
+import { settings, STYLE_PRESETS, type StylePresetKey } from './api/settings'
+import { computed } from 'vue'
 import './api/settings'  // 启动即应用主题
+
+// 当前风格预设的调色板（侧栏/菜单颜色随风格切换）
+const pal = computed(() => {
+  const p = STYLE_PRESETS[settings.stylePreset as StylePresetKey] ?? STYLE_PRESETS.ocean
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(p.vars)) out[k] = v
+  return out
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -83,7 +92,9 @@ watch(() => settings.language, v => { locale.value = v === 'system' ? (navigator
 </script>
 
 <style scoped>
-.sidebar { background: #001529; display: flex; flex-direction: column; transition: width .2s; overflow: hidden; }
+.sidebar { background: var(--lh-sidebar-bg); display: flex; flex-direction: column; transition: width .2s; overflow: hidden; }
+.sidebar :deep(.el-menu) { background: transparent; }
+.sidebar :deep(.el-menu-item.is-active) { background: var(--lh-sidebar-active); }
 .logo { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; color: #fff; padding: 0 20px; height: 60px; flex-shrink: 0; }
 .logo.mini { justify-content: center; padding: 0; }
 .logo .oct { font-size: 26px; flex-shrink: 0; }

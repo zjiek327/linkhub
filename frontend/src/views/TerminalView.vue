@@ -111,14 +111,14 @@ watch(() => [route.params.sessionId, route.query], () => {
 </script>
 
 <style scoped>
-.terminal-page { display: flex; flex-direction: column; height: 100%; background: #0c0c0c; }
-.tabs-bar { background: #161616; padding: 4px 8px 0; }
+.terminal-page { display: flex; flex-direction: column; height: 100%; background: var(--lh-workbench-bg); }
+.tabs-bar { background: var(--lh-panel-bg); padding: 6px 10px 0; border-bottom: 1px solid var(--lh-panel-border); }
 .tabs-bar :deep(.el-tabs__header) { margin: 0; border-bottom: none; }
-.tabs-bar :deep(.el-tabs__item) { color: #999; }
-.tabs-bar :deep(.el-tabs__item.is-active) { color: #fff; background: #0c0c0c; }
+.tabs-bar :deep(.el-tabs__item) { color: var(--lh-muted); border: 1px solid transparent; }
+.tabs-bar :deep(.el-tabs__item.is-active) { color: var(--lh-fg); background: var(--lh-workbench-bg); }
 .tab-label { display: inline-flex; align-items: center; gap: 6px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; }
-.dot.on { background: #67c23a; }
-.dot.off { background: #909399; }
+.dot.on { background: var(--lh-accent); }
+.dot.off { background: var(--lh-muted); }
 .panes { flex: 1; overflow: hidden; }
 </style>
