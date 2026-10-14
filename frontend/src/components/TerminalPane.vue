@@ -9,6 +9,10 @@
         {{ amWriter ? '✏️ 主控' : '👁 旁观' }}
       </el-tag>
       <el-tag v-if="viewers > 1" size="small" effect="plain">{{ viewers }} 人在看</el-tag>
+      <span class="chat-entry" :title="$t('terminal.chatTip')" @click="toggleChat">
+        <el-icon><ChatDotRound /></el-icon>
+        <span v-if="chatUnread && !chatOpen" class="chat-entry-badge">{{ chatUnread > 9 ? '9+' : chatUnread }}</span>
+      </span>
       <span v-if="lastError" class="err">{{ lastError }}</span>
       <div style="flex:1" />
       <el-button v-if="!amWriter" size="small" type="warning" @click="requestWrite">{{ $t('terminal.requestInput') }}</el-button>
@@ -68,18 +72,25 @@
           </el-tooltip>
         </div>
         <div class="xfer-pane" @dragover.prevent @drop.prevent="onDropToLocal">
-          <div class="xfer-title">设备目录：<span class="xfer-path">{{ remotePath }}</span></div>
-          <div class="xfer-list" @dragover.prevent @drop.prevent="onDropToLocal">
-            <div class="xfer-row dir" @click="loadRemote(parentOf(remotePath))">
-              <el-icon><ArrowUp /></el-icon><span>..</span>
+          <div class="xfer-title">设备目录：<span class="xfer-path">{{ remotePath }}</span>
+            <span class="xfer-dest-tag">（上传/下载目的地）</span>
+          </div>
+          <div class="xfer-list xfer-table" @dragover.prevent @drop.prevent="onDropToLocal">
+            <div class="xfer-head-row" @click="loadRemote(parentOf(remotePath))">
+              <span class="c-icon"></span><span class="c-name">↰ 上级目录</span>
+              <span class="c-size"></span><span class="c-perm"></span>
+              <span class="c-owner"></span><span class="c-time"></span>
             </div>
-            <div v-for="e in remoteEntries" :key="e.name" class="xfer-row"
-                 :class="{ dir: e.is_dir, sel: selectedRemote?.name === e.name && !e.is_dir }"
+            <div v-for="(e, i) in remoteEntries" :key="e.name" class="xfer-tr"
+                 :class="{ odd: i % 2 === 1, sel: selectedRemote?.name === e.name && !e.is_dir }"
                  draggable="true" @dragstart="onRemoteDragStart($event, e)"
                  @click="e.is_dir ? loadRemote(joinRemote(e.name)) : (selectedRemote = e)">
-              <el-icon><Folder v-if="e.is_dir" /><Document v-else /></el-icon>
+              <span class="c-icon"><el-icon><Folder v-if="e.is_dir" /><Document v-else /></el-icon></span>
               <span class="xfer-file-name">{{ e.name }}</span>
-              <span class="xfer-file-size">{{ e.is_dir ? '' : fmtSize(e.size) }}</span>
+              <span class="c-size">{{ e.is_dir ? '-' : fmtSize(e.size) }}</span>
+              <span class="c-perm">{{ e.perm || '' }}</span>
+              <span class="c-owner">{{ e.owner || '' }}</span>
+              <span class="c-time">{{ fmtTime(e.mtime) }}</span>
             </div>
             <div v-if="!remoteEntries.length" class="xfer-empty">空目录（或读取失败）</div>
           </div>
@@ -441,6 +452,10 @@ const chatListEl = ref<HTMLElement | null>(null)
 const chatPos = ref({ x: 0, y: 0 })
 const lastChat = computed(() => chatMsgs.value.at(-1) ?? null)
 
+function toggleChat() {
+  chatOpen.value = !chatOpen.value
+  if (chatOpen.value) { chatUnread.value = 0; scrollChat() }
+}
 function openChat() { chatOpen.value = true; chatUnread.value = 0; scrollChat() }
 let chatDragMoved = false
 function chatClick() { if (!chatDragMoved) openChat(); chatDragMoved = false }
@@ -694,7 +709,7 @@ onMounted(async () => {
     if (info.name) myName = `${myName}@${info.name}`
   } catch { /* 单机 */ }
   resetChat()
-  if (!sessionStorage.getItem('linkhub_chat_pos')) {
+  if (!localStorage.getItem('linkhub_chat_pos')) {
     nextTick(() => {
       const el = termEl.value
       if (el) chatPos.value = { x: Math.max(8, el.clientWidth - 270), y: Math.max(8, el.clientHeight - 330) }
@@ -803,10 +818,48 @@ onUnmounted(() => {
 .chat-tool:hover:not(:disabled) { color: var(--lh-fg); background: rgba(128,128,128,.15); }
 .chat-tool:disabled { opacity: .35; cursor: not-allowed; }
 
-/* ---------- SFTP 附加 ---------- */
-.xfer-actions { display: flex; gap: 10px; margin-top: 10px; }
-.xfer-row.sel { background: var(--el-color-primary-light-9); }
+/* ---------- SFTP 文件传输（行式列表） ---------- */
+.pane { position: relative; }
+.xfer-wrap { display: flex; gap: 8px; align-items: stretch; }
+.xfer-pane { flex: 1; min-width: 0; border: 1px solid var(--el-border-color); border-radius: 8px; padding: 10px; }
+.xfer-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
 .xfer-path { font-weight: 400; color: var(--el-text-color-secondary); }
+.xfer-dest-tag { color: var(--el-color-success); font-weight: 400; }
+.xfer-list { height: 320px; overflow-y: auto; font-size: 12px; }
+.xfer-list::-webkit-scrollbar { width: 6px; }
+.xfer-list::-webkit-scrollbar-thumb { background: rgba(128,128,128,.3); border-radius: 3px; }
+.xfer-head-row { display: grid; grid-template-columns: 20px 1fr 70px 90px 80px 130px; gap: 6px;
+  padding: 3px 6px; color: var(--el-text-color-secondary); font-size: 11px;
+  border-bottom: 1px solid var(--el-border-color-lighter); cursor: pointer; }
+.xfer-head-row:hover { color: var(--el-text-color-primary); }
+.xfer-tr { display: grid; grid-template-columns: 20px 1fr 70px 90px 80px 130px; gap: 6px;
+  padding: 3px 6px; cursor: pointer; color: var(--el-text-color-primary); align-items: center;
+  border-radius: 4px; }
+.xfer-tr.odd { background: rgba(128,128,128,.07); }
+.xfer-tr:hover { background: var(--el-fill-color-light); }
+.xfer-tr.sel { background: var(--el-color-primary-light-9); outline: 1px solid var(--el-color-primary-light-5); }
+.xfer-tr .c-icon { display: flex; align-items: center; }
+.xfer-tr .c-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xfer-tr .c-size, .xfer-tr .c-perm, .xfer-tr .c-owner, .xfer-tr .c-time {
+  color: var(--el-text-color-secondary); font-size: 11px; text-align: right; }
+.xfer-empty { color: var(--el-text-color-secondary); font-size: 12px; text-align: center; padding-top: 60px; }
+
+/* 中间传输方向（竖排，透明底图标） */
+.xfer-mid { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; padding: 0 2px; }
+.xfer-arrow { width: 38px; height: 38px; border: none; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+  color: var(--el-color-primary); background: transparent;
+  transition: background .12s ease, transform .12s ease; }
+.xfer-arrow:hover:not(:disabled) { background: var(--el-color-primary-light-9); transform: scale(1.12); }
+.xfer-arrow:disabled { opacity: .3; cursor: not-allowed; }
+
+/* 工具栏聊天入口（角标） */
+.chat-entry { position: relative; display: flex; align-items: center; cursor: pointer;
+  color: var(--lh-muted); padding: 2px 4px; border-radius: 4px; font-size: 16px; }
+.chat-entry:hover { color: var(--lh-fg); background: rgba(128,128,128,.15); }
+.chat-entry-badge { position: absolute; top: -6px; right: -8px; min-width: 16px; height: 16px;
+  padding: 0 4px; border-radius: 8px; background: #f56c6c; color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
 
 /* 进出场动画 */
 .chat-pop-enter-active { transition: opacity .16s ease, transform .18s cubic-bezier(.34,1.5,.64,1); }
