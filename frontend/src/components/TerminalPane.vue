@@ -215,8 +215,8 @@ function fmtSize(n: number) {
 async function loadRemote(path = remotePath.value) {
   try {
     const r = await api.sftpList(props.sessionId, path, props.remoteNode)
-    remotePath.value = r.path
-    remoteEntries.value = r.entries
+    remotePath.value = r.path ?? path
+    remoteEntries.value = Array.isArray(r.entries) ? r.entries : []
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail ?? '读取目录失败')
   }
