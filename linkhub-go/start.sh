@@ -35,6 +35,11 @@ do_start() {
   if pid; then echo "✓ 已在运行 (pid $(cat "$PID_FILE"))"; exit 0; fi
   # 源码比二进制新（如 git pull 之后）则重新编译
   if [ ! -x ./linkhub ] || [ -n "$(find . -name '*.go' -newer ./linkhub -print -quit 2>/dev/null)" ]; then
+    if [ ! -f go.mod ]; then
+      echo "✗ 缺少 go.mod（代码不完整），请重新 git clone 或 git checkout"
+      exit 1
+    fi
+    export GO111MODULE=on   # 防止环境变量把 Go 退回 GOPATH 模式
     echo "正在编译 linkhub..."
     go build -o linkhub . || { echo "✗ 编译失败"; exit 1; }
   fi

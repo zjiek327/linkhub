@@ -15,6 +15,12 @@ if not defined LINKHUB_NODE_NAME set LINKHUB_NODE_NAME=%COMPUTERNAME%
 rem ---- 有 Go 就重新编译（保证 git pull 后二进制最新），没有就用已有 exe ----
 where go >nul 2>nul
 if not errorlevel 1 (
+  if not exist go.mod (
+    echo 缺少 go.mod（代码不完整），请重新 git clone 或 git checkout
+    pause
+    exit /b 1
+  )
+  set GO111MODULE=on
   echo 正在编译 linkhub.exe...
   go build -o linkhub.exe . || (echo 编译失败，尝试使用已有 exe & if not exist linkhub.exe exit /b 1)
 ) else if not exist linkhub.exe (
