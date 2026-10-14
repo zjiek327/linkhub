@@ -106,6 +106,7 @@ type Session struct {
 	// JOIN 带出，终端 Tab 标题用
 	ConnectionName string `json:"connection_name,omitempty"`
 	DeviceName     string `json:"device_name,omitempty"`
+	Kind           string `json:"kind,omitempty"` // 连接方式（状态栏展示）
 }
 
 type SessionLog struct {

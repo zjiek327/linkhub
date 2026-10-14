@@ -38,7 +38,6 @@ type Session struct {
 
 	mu      sync.RWMutex
 	clients map[string]*Client
-	chats   []map[string]interface{} // 会话内聊天记录（仅内存，随会话消失）
 	closing bool
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -395,10 +394,14 @@ func (s *Session) subscribeRaw(clientID, name string, canWrite bool) (*Client, b
 	}
 	s.clients[clientID] = c
 	// 补发会话聊天历史（新加入的旁观者能看到之前聊了什么）
-	for _, m := range s.chats {
-		select {
-		case c.Queue <- m:
-		default:
+	if s.store != nil {
+		if history, err := s.store.SessionChats(s.ID, 50); err == nil {
+			for _, m := range history {
+				select {
+				case c.Queue <- m:
+				default:
+				}
+			}
 		}
 	}
 	s.broadcastCtrlLocked(map[string]interface{}{"type": "presence", "viewers": len(s.clients)})
@@ -434,12 +437,12 @@ func (s *Session) Control(clientID string, msg map[string]interface{}) {
 			"type": "chat", "from": clientID, "name": name,
 			"text": text, "ts": time.Now().Format("15:04:05"),
 		}
-		s.chats = append(s.chats, out)
-		if len(s.chats) > 50 {
-			s.chats = s.chats[len(s.chats)-50:]
-		}
 		s.broadcastCtrlLocked(out)
 		s.mu.Unlock()
+		// 聊天持久化（重启后会话重新打开仍可回放）
+		if s.store != nil {
+			s.store.AddSessionChat(s.ID, clientID, fmt.Sprint(out["name"]), text, fmt.Sprint(out["ts"]))
+		}
 		return
 	}
 	// resize：仅写入者可改窗口尺寸，避免旁观者互相拉扯

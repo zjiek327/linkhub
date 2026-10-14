@@ -4,6 +4,7 @@
       <span class="title">{{ displayName || `会话 #${sessionId}` }}</span>
       <el-tag v-if="remoteNode" size="small" type="warning" effect="plain">经节点中继</el-tag>
       <StatusBadge :status="status" />
+      <el-tag v-if="connKind" size="small" effect="plain">{{ kindLabel(connKind) }}</el-tag>
       <el-tag :type="amWriter ? 'success' : 'info'" size="small" effect="dark">
         {{ amWriter ? '✏️ 主控' : '👁 旁观' }}
       </el-tag>
@@ -33,6 +34,52 @@
     </div>
     <div ref="termEl" class="term" />
 
+    <!-- SFTP 文件传输：左=本地源文件，右=设备目录 -->
+    <el-dialog v-model="xferDlg" title="文件传输（SFTP）" width="760px">
+      <div class="xfer-wrap">
+        <div class="xfer-pane">
+          <div class="xfer-title">本地（源文件）</div>
+          <div class="xfer-local">
+            <input ref="fileInputEl" type="file" multiple style="display:none" @change="onFilesChosen" />
+            <el-button size="small" style="width:100%" @click="fileInputEl?.click()">选择文件…</el-button>
+            <div v-for="(f, i) in localFiles" :key="i" class="xfer-file">
+              <span class="xfer-file-name">{{ f.name }}</span>
+              <span class="xfer-file-size">{{ fmtSize(f.size) }}</span>
+            </div>
+            <div v-if="!localFiles.length" class="xfer-empty">尚未选择文件</div>
+          </div>
+          <el-button type="primary" size="small" style="width:100%;margin-top:8px"
+                     :disabled="!localFiles.length || uploading" :loading="uploading" @click="doUpload">
+            {{ uploading ? '上传中…' : `上传到设备目录` }}
+          </el-button>
+        </div>
+        <div class="xfer-pane">
+          <div class="xfer-title">
+            设备目录
+            <span class="xfer-path" :title="remotePath">{{ remotePath }}</span>
+          </div>
+          <div class="xfer-remote">
+            <div class="xfer-remote-row" @click="remotePathUp">
+              <el-icon><ArrowUp /></el-icon><span>..</span>
+            </div>
+            <div v-for="e in remoteEntries" :key="e.name" class="xfer-remote-row"
+                 :class="{ sel: selectedRemote?.name === e.name && !e.is_dir }"
+                 @dblclick="!e.is_dir && (selectedRemote = e)" @click="e.is_dir ? enterRemoteDir(e.name) : (selectedRemote = e)">
+              <el-icon v-if="e.is_dir"><Folder /></el-icon>
+              <el-icon v-else><Document /></el-icon>
+              <span class="xfer-file-name">{{ e.name }}</span>
+              <span class="xfer-file-size">{{ e.is_dir ? '' : fmtSize(e.size) }}</span>
+            </div>
+            <div v-if="!remoteEntries.length" class="xfer-empty">空目录</div>
+          </div>
+          <el-button size="small" style="width:100%;margin-top:8px"
+                     :disabled="!selectedRemote || uploading" @click="doDownload">
+            下载选中文件
+          </el-button>
+        </div>
+      </div>
+    </el-dialog>
+
     <!-- 会话内协作聊天：悬浮可拖动；收起为渐变气泡+未读角标+最新消息预览卡 -->
     <div v-if="chatVisible" class="chat-widget" :style="{ left: chatPos.x + 'px', top: chatPos.y + 'px' }">
       <Transition name="chat-pop">
@@ -55,6 +102,11 @@
             <div v-if="!chatMsgs.length" class="chat-empty">{{ $t('terminal.chatEmpty') }}</div>
           </div>
           <div class="chat-input">
+            <el-tooltip content="文件传输（仅 SSH 会话支持）" placement="top">
+              <button class="chat-tool" :disabled="!isSsh" :title="isSsh ? '文件传输' : '仅 SSH 会话支持文件传输'" @click="xferDlg = true">
+                <el-icon><FolderOpened /></el-icon>
+              </button>
+            </el-tooltip>
             <el-input v-model="chatDraft" size="small" :placeholder="$t('terminal.chatPlaceholder')"
                       maxlength="500" @keydown.enter.prevent="sendChat" />
             <button class="chat-send" :disabled="!chatDraft.trim()" :title="$t('terminal.send')" @click="sendChat">
@@ -84,7 +136,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElButton, ElMessage, ElNotification } from 'element-plus'
-import { ChatDotRound, Minus, Promotion } from '@element-plus/icons-vue'
+import { ChatDotRound, Minus, Promotion, FolderOpened, Document, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -121,6 +173,65 @@ let sizeSynced = false
 let sessionDead = false
 let closedAnnounced = false
 const barVisible = ref(settings.terminal.toolbarVisible)
+// 连接方式 + SFTP 文件传输
+const connKind = ref('')
+const isSsh = computed(() => connKind.value === 'ssh')
+const xferDlg = ref(false)
+const fileInputEl = ref<HTMLInputElement | null>(null)
+const localFiles = ref<File[]>([])
+const remotePath = ref('/')
+const remoteEntries = ref<any[]>([])
+const selectedRemote = ref<any>(null)
+const uploading = ref(false)
+
+function kindLabel(kind: string) {
+  return { serial: '串口', ssh: 'SSH', telnet: 'Telnet', mqtt: 'MQTT' }[kind] ?? kind
+}
+function fmtSize(n: number) {
+  if (n < 1024) return `${n} B`
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1048576).toFixed(1)} MB`
+}
+async function loadRemote(path = remotePath.value) {
+  try {
+    const r = await api.sftpList(props.sessionId, path)
+    remotePath.value = r.path
+    remoteEntries.value = r.entries
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail ?? '读取目录失败')
+  }
+}
+function enterRemoteDir(name: string) {
+  loadRemote((remotePath.value === '/' ? '' : remotePath.value) + '/' + name)
+}
+function remotePathUp() {
+  if (remotePath.value === '/') return
+  loadRemote(remotePath.value.replace(/\/[^^/]+$/, '') || '/')
+}
+function onFilesChosen(ev: Event) {
+  const files = (ev.target as HTMLInputElement).files
+  localFiles.value = files ? Array.from(files) : []
+}
+async function doUpload() {
+  uploading.value = true
+  try {
+    for (const f of localFiles.value) {
+      const form = new FormData()
+      form.append('file', f)
+      await api.sftpUpload(props.sessionId, remotePath.value, form)
+    }
+    ElMessage.success('上传完成')
+    localFiles.value = []
+    loadRemote()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail ?? '上传失败')
+  } finally { uploading.value = false }
+}
+async function doDownload() {
+  if (!selectedRemote.value) return
+  const p = (remotePath.value === '/' ? '' : remotePath.value) + '/' + selectedRemote.value.name
+  await api.sftpDownload(props.sessionId, p, selectedRemote.value.name)
+}
 function toggleBar() {
   barVisible.value = !barVisible.value
   settings.terminal.toolbarVisible = barVisible.value
@@ -336,6 +447,14 @@ function connectWs() {
   }
 }
 
+// 连接方式：会话详情带出（工具栏标签 + SFTP 可用性）
+watch(() => props.sessionId, async () => {
+  try {
+    const s = await api.session(props.sessionId)
+    connKind.value = s.kind ?? ''
+  } catch { connKind.value = '' }
+}, { immediate: true })
+
 async function loadStatus() {
   if (props.remoteNode) { status.value = 'online'; return }
   try {
@@ -466,6 +585,24 @@ onUnmounted(() => {
   background: var(--lh-accent); transition: transform .12s ease, opacity .12s ease; }
 .chat-send:hover:not(:disabled) { transform: scale(1.08); }
 .chat-send:disabled { opacity: .35; cursor: default; }
+
+/* ---------- SFTP 文件传输 ---------- */
+.xfer-wrap { display: flex; gap: 12px; }
+.xfer-pane { flex: 1; min-width: 0; border: 1px solid var(--el-border-color); border-radius: 8px; padding: 10px; }
+.xfer-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.xfer-path { font-weight: 400; color: var(--el-text-color-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xfer-local, .xfer-remote { height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.xfer-remote-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px;
+  cursor: pointer; font-size: 12px; color: var(--el-text-color-primary); }
+.xfer-remote-row:hover { background: var(--el-fill-color-light); }
+.xfer-remote-row.sel { background: var(--el-color-primary-light-9); color: var(--el-color-primary); }
+.xfer-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xfer-file-size { font-size: 11px; color: var(--el-text-color-secondary); }
+.xfer-empty { color: var(--el-text-color-secondary); font-size: 12px; text-align: center; padding-top: 24px; }
+.chat-tool { flex-shrink: 0; width: 28px; height: 28px; border: none; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: var(--lh-muted); background: transparent; }
+.chat-tool:hover:not(:disabled) { color: var(--lh-fg); background: rgba(128,128,128,.15); }
+.chat-tool:disabled { opacity: .35; cursor: not-allowed; }
 
 /* 进出场动画 */
 .chat-pop-enter-active { transition: opacity .16s ease, transform .18s cubic-bezier(.34,1.5,.64,1); }

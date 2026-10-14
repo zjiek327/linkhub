@@ -535,3 +535,34 @@ func (s *Store) DeviceGroupsOf(deviceID int64) []models.DeviceGroup {
 	}
 	return out
 }
+
+// ---------- 会话聊天持久化 ----------
+func (s *Store) AddSessionChat(sessionID int64, cid, name, text, ts string) error {
+	return s.Exec(nil, `INSERT INTO session_chats (session_id, sender_cid, sender_name, text, ts) VALUES (?,?,?,?,?)`,
+		sessionID, cid, name, text, ts)
+}
+
+// SessionChats 会话聊天记录（最近 limit 条，按时间正序）
+func (s *Store) SessionChats(sessionID int64, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`SELECT sender_cid, sender_name, text, ts FROM (
+		SELECT * FROM session_chats WHERE session_id=? ORDER BY id DESC LIMIT ?
+	) ORDER BY id ASC`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]interface{}{}
+	for rows.Next() {
+		var cid, name, text, ts string
+		if err := rows.Scan(&cid, &name, &text, &ts); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]interface{}{
+			"type": "chat", "from": cid, "name": name, "text": text, "ts": ts,
+		})
+	}
+	return out, nil
+}

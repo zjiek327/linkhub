@@ -52,7 +52,7 @@ export interface Connection {
 export interface Session {
   id: number; connection_id: number; opened_by: string; opened_at: string
   closed_at: string | null; status: string; last_error: string; node_id: string
-  connection_name?: string; device_name?: string
+  connection_name?: string; device_name?: string; kind?: string
 }
 export interface SerialPort { device: string; description: string; hwid: string; is_usb: boolean; node: string; node_id: string }
 export interface ConnectorKind { kind: string; schema: any }
@@ -99,6 +99,17 @@ export const api = {
 
   sessions: (status?: string) => http.get<Session[]>('/sessions', { params: { status } }).then(r => r.data),
   session: (id: number) => http.get<Session>(`/sessions/${id}`).then(r => r.data),
+  sftpList: (sid: number, path: string) => http.get(`/sessions/${sid}/sftp/list`, { params: { path } }).then(r => r.data),
+  sftpUpload: (sid: number, path: string, form: FormData) =>
+    http.post(`/sessions/${sid}/sftp/upload?path=${encodeURIComponent(path)}`, form,
+      { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data),
+  sftpDownload: async (sid: number, path: string, name: string) => {
+    const r = await http.get(`/sessions/${sid}/sftp/download`, { params: { path }, responseType: 'blob' })
+    const url = URL.createObjectURL(r.data as Blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = name; a.click()
+    URL.revokeObjectURL(url)
+  },
   closeSession: (id: number) => http.post<Session>(`/sessions/${id}/close`).then(r => r.data),
   sessionLogs: (id: number) => http.get<any[]>(`/sessions/${id}/logs`).then(r => r.data),
 

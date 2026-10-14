@@ -193,7 +193,16 @@ func migrateTenants(db *sql.DB) error {
 		node_id TEXT NOT NULL,
 		readonly BOOLEAN DEFAULT 0,
 		UNIQUE(device_id, node_id)
-	);`
+	);
+	CREATE TABLE IF NOT EXISTS session_chats (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+		sender_cid TEXT DEFAULT '',
+		sender_name TEXT DEFAULT '',
+		text TEXT NOT NULL,
+		ts TEXT DEFAULT ''
+	);
+	CREATE INDEX IF NOT EXISTS idx_chats_session ON session_chats(session_id);`
 	if _, err := db.Exec(ts); err != nil {
 		return err
 	}
@@ -520,7 +529,7 @@ func (s *Store) DeleteConnection(id int64) error {
 }
 
 // ---------- 会话 ----------
-const sessionSelect = `SELECT s.id, s.connection_id, s.opened_by, s.opened_at, s.closed_at, s.status, s.last_error, s.node_id, c.name, d.name
+const sessionSelect = `SELECT s.id, s.connection_id, s.opened_by, s.opened_at, s.closed_at, s.status, s.last_error, s.node_id, c.name, d.name, c.kind
 	FROM sessions s
 	LEFT JOIN connection_profiles c ON s.connection_id = c.id
 	LEFT JOIN devices d ON c.device_id = d.id`
@@ -543,8 +552,8 @@ func (s *Store) ListSessions(status string) ([]models.Session, error) {
 		var ss models.Session
 		var connID sql.NullInt64
 		var closedAt sql.NullTime
-		var connName, devName sql.NullString
-		if err := rows.Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID, &connName, &devName); err != nil {
+		var connName, devName, connKind sql.NullString
+		if err := rows.Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID, &connName, &devName, &connKind); err != nil {
 			return nil, err
 		}
 		if connID.Valid {
@@ -553,7 +562,7 @@ func (s *Store) ListSessions(status string) ([]models.Session, error) {
 		if closedAt.Valid {
 			ss.ClosedAt = &closedAt.Time
 		}
-		ss.ConnectionName, ss.DeviceName = connName.String, devName.String
+		ss.ConnectionName, ss.DeviceName, ss.Kind = connName.String, devName.String, connKind.String
 		out = append(out, ss)
 	}
 	return out, nil
@@ -563,9 +572,9 @@ func (s *Store) GetSession(id int64) (*models.Session, error) {
 	var ss models.Session
 	var connID sql.NullInt64
 	var closedAt sql.NullTime
-	var connName, devName sql.NullString
+	var connName, devName, connKind sql.NullString
 	err := s.db.QueryRow(sessionSelect+" WHERE s.id=?", id).
-		Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID, &connName, &devName)
+		Scan(&ss.ID, &connID, &ss.OpenedBy, &ss.OpenedAt, &closedAt, &ss.Status, &ss.LastError, &ss.NodeID, &connName, &devName, &connKind)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -578,7 +587,7 @@ func (s *Store) GetSession(id int64) (*models.Session, error) {
 	if closedAt.Valid {
 		ss.ClosedAt = &closedAt.Time
 	}
-	ss.ConnectionName, ss.DeviceName = connName.String, devName.String
+	ss.ConnectionName, ss.DeviceName, ss.Kind = connName.String, devName.String, connKind.String
 	return &ss, nil
 }
 

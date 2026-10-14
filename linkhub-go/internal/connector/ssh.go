@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/pkg/sftp"
 )
 
 func init() { Register("ssh", NewSSH) }
@@ -92,4 +94,12 @@ func (c *SSHConnector) Resize(rows, cols int) error {
 		return fmt.Errorf("SSH 未连接")
 	}
 	return c.session.WindowChange(rows, cols)
+}
+
+// SFTP 返回 SFTP 客户端（文件上传/下载）
+func (c *SSHConnector) SFTP() (*sftp.Client, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("SSH 未连接")
+	}
+	return sftp.NewClient(c.client)
 }
