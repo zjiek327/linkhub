@@ -44,10 +44,12 @@ func NewCluster(st *store.Store, selfID, selfName, address, token string) *Clust
 		store: st,
 		client: &http.Client{Timeout: 6 * time.Second},
 	}
-	// 上次运行加入过的节点从库加载：启动即显示（离线态），DirectPeersLoop 自动重连后转在线
+	// 上次运行加入过的节点从库加载：一律先以离线态展示（库里残留的 online 不可信），
+	// DirectPeersLoop/持久化地址自动重连成功后才转在线
 	if nodes, err := st.ListNodes(); err == nil {
 		for _, n := range nodes {
 			if n.NodeID != selfID {
+				n.Status = "offline"
 				c.seedNodes = append(c.seedNodes, n)
 			}
 		}
