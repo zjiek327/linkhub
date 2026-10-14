@@ -26,49 +26,68 @@
     </div>
     <div ref="termEl" class="term" />
 
-    <!-- SFTP 文件传输：左=本地源文件，右=设备目录 -->
-    <el-dialog v-model="xferDlg" title="文件传输（SFTP）" width="760px">
+    <!-- SFTP 文件传输：左=本地目录浏览，右=设备目录；显式选择目的目录 -->
+    <el-dialog v-model="xferDlg" title="文件传输（SFTP）" width="780px" @open="onXferOpen">
       <div class="xfer-wrap">
         <div class="xfer-pane">
-          <div class="xfer-title">本地（源文件）</div>
-          <div class="xfer-local">
-            <input ref="fileInputEl" type="file" multiple style="display:none" @change="onFilesChosen" />
-            <el-button size="small" style="width:100%" @click="fileInputEl?.click()">选择文件…</el-button>
-            <div v-for="(f, i) in localFiles" :key="i" class="xfer-file">
-              <span class="xfer-file-name">{{ f.name }}</span>
-              <span class="xfer-file-size">{{ fmtSize(f.size) }}</span>
-            </div>
-            <div v-if="!localFiles.length" class="xfer-empty">尚未选择文件</div>
+          <div class="xfer-title">
+            本地（源目录）：{{ localDirName || '未选择' }}
+            <el-button size="small" style="margin-left:auto" @click="pickLocalDir">{{ localDirName ? '换目录' : '选择本地目录' }}</el-button>
           </div>
-          <el-button type="primary" size="small" style="width:100%;margin-top:8px"
-                     :disabled="!localFiles.length || uploading" :loading="uploading" @click="doUpload">
-            {{ uploading ? '上传中…' : `上传到设备目录` }}
-          </el-button>
+          <div class="xfer-list">
+            <template v-if="localDirHandle">
+              <div v-if="localDirParent" class="xfer-row" @click="openLocalDir(localDirParent)">
+                <el-icon><ArrowUp /></el-icon><span>..</span>
+              </div>
+              <div v-for="e in localEntries" :key="e.name" class="xfer-row"
+                   :class="{ sel: e.isDir ? localDirSel === e.handle : localSel.has(e.name) }"
+                   @click="e.isDir ? openLocalDir(e.handle) : toggleLocalSel(e)">
+                <el-icon><Folder v-if="e.isDir" /><Document v-else /></el-icon>
+                <span class="xfer-file-name">{{ e.name }}</span>
+                <span class="xfer-file-size">{{ e.isDir ? '目录' : fmtSize(e.size ?? 0) }}</span>
+              </div>
+              <div v-if="!localEntries.length" class="xfer-empty">空目录</div>
+            </template>
+            <template v-else>
+              <input ref="fileInputEl" type="file" multiple style="display:none" @change="onFilesChosen" />
+              <el-button size="small" style="width:100%" @click="fileInputEl?.click()">选择文件…（浏览器不支持目录浏览时的备选）</el-button>
+              <div v-for="(f, i) in localFiles" :key="i" class="xfer-row">
+                <span class="xfer-file-name">{{ f.name }}</span>
+                <span class="xfer-file-size">{{ fmtSize(f.size) }}</span>
+              </div>
+              <div v-if="!localFiles.length" class="xfer-empty">尚未选择本地目录或文件</div>
+            </template>
+          </div>
         </div>
         <div class="xfer-pane">
           <div class="xfer-title">
-            设备目录
-            <span class="xfer-path" :title="remotePath">{{ remotePath }}</span>
+            设备目录：<span class="xfer-path">{{ remotePath }}</span>
+            <el-button size="small" style="margin-left:auto"
+                       :type="remoteDest === remotePath ? 'primary' : 'default'"
+                       @click="selectRemoteDest(remotePath)">选定当前目录为目的</el-button>
           </div>
-          <div class="xfer-remote">
-            <div class="xfer-remote-row" @click="remotePathUp">
+          <div class="xfer-list">
+            <div class="xfer-row" @click="loadRemote(parentOf(remotePath))">
               <el-icon><ArrowUp /></el-icon><span>..</span>
             </div>
-            <div v-for="e in remoteEntries" :key="e.name" class="xfer-remote-row"
-                 :class="{ sel: selectedRemote?.name === e.name && !e.is_dir }"
-                 @dblclick="!e.is_dir && (selectedRemote = e)" @click="e.is_dir ? enterRemoteDir(e.name) : (selectedRemote = e)">
-              <el-icon v-if="e.is_dir"><Folder /></el-icon>
-              <el-icon v-else><Document /></el-icon>
+            <div v-for="e in remoteEntries" :key="e.name" class="xfer-row"
+                 :class="{ sel: e.is_dir ? remoteDest === joinRemote(e.name) : selectedRemote?.name === e.name && !e.is_dir }"
+                 @click="e.is_dir ? loadRemote(joinRemote(e.name)) : (selectedRemote = e)">
+              <el-icon><Folder v-if="e.is_dir" /><Document v-else /></el-icon>
               <span class="xfer-file-name">{{ e.name }}</span>
               <span class="xfer-file-size">{{ e.is_dir ? '' : fmtSize(e.size) }}</span>
+              <el-button v-if="e.is_dir" size="small" text type="primary"
+                         @click.stop="selectRemoteDest(joinRemote(e.name))">设为目的地</el-button>
             </div>
-            <div v-if="!remoteEntries.length" class="xfer-empty">空目录</div>
+            <div v-if="!remoteEntries.length" class="xfer-empty">空目录（或读取失败）</div>
           </div>
-          <el-button size="small" style="width:100%;margin-top:8px"
-                     :disabled="!selectedRemote || uploading" @click="doDownload">
-            下载选中文件
-          </el-button>
         </div>
+      </div>
+      <div class="xfer-actions">
+        <el-button type="primary" :disabled="!canUpload" :loading="uploading" @click="doUpload">
+          {{ uploading ? '上传中…' : `上传选中文件到「${remoteDest || '未选中目的地'}」` }}
+        </el-button>
+        <el-button :disabled="!selectedRemote" @click="doDownload">下载选中文件</el-button>
       </div>
     </el-dialog>
 
@@ -95,7 +114,7 @@
           </div>
           <div class="chat-input">
             <el-tooltip content="文件传输（仅 SSH 会话支持）" placement="top">
-              <button class="chat-tool" :disabled="!isSsh" :title="isSsh ? '文件传输' : '仅 SSH 会话支持文件传输'" @click="xferDlg = true">
+              <button class="chat-tool" :disabled="!isSsh" :title="isSsh ? '文件传输' : '仅 SSH 会话支持文件传输'" @click="openXfer">
                 <el-icon><FolderOpened /></el-icon>
               </button>
             </el-tooltip>
@@ -171,11 +190,19 @@ const connKind = ref('')
 const isSsh = computed(() => connKind.value === 'ssh')
 const xferDlg = ref(false)
 const fileInputEl = ref<HTMLInputElement | null>(null)
-const localFiles = ref<File[]>([])
+const localFiles = ref<File[]>([])          // 备选模式（无目录浏览 API 时）
 const remotePath = ref('/')
 const remoteEntries = ref<any[]>([])
 const selectedRemote = ref<any>(null)
 const uploading = ref(false)
+// 本地目录浏览（File System Access API）
+const localDirHandle = ref<any>(null)
+const localDirName = ref('')
+const localDirParent = ref<any>(null)
+const localEntries = ref<any[]>([])
+const localDirSel = ref<any>(null)
+const localSel = ref(new Set<string>())
+const remoteDest = ref('')
 
 function kindLabel(kind: string) {
   return { serial: '串口', ssh: 'SSH', telnet: 'Telnet', mqtt: 'MQTT' }[kind] ?? kind
@@ -187,7 +214,7 @@ function fmtSize(n: number) {
 }
 async function loadRemote(path = remotePath.value) {
   try {
-    const r = await api.sftpList(props.sessionId, path)
+    const r = await api.sftpList(props.sessionId, path, props.remoteNode)
     remotePath.value = r.path
     remoteEntries.value = r.entries
   } catch (e: any) {
@@ -205,25 +232,101 @@ function onFilesChosen(ev: Event) {
   const files = (ev.target as HTMLInputElement).files
   localFiles.value = files ? Array.from(files) : []
 }
+function joinRemote(name: string) {
+  return (remotePath.value === '/' ? '' : remotePath.value) + '/' + name
+}
+function parentOf(p: string) {
+  if (p === '/') return '/'
+  const idx = p.lastIndexOf('/')
+  return idx <= 0 ? '/' : p.slice(0, idx)
+}
+function selectRemoteDest(dir: string) {
+  remoteDest.value = dir
+  ElMessage.success(`目的目录：${dir}`)
+}
+const canUpload = computed(() =>
+  !!remoteDest.value && (localDirHandle.value ? localSel.value.size > 0 : localFiles.value.length > 0))
+
+// 本地目录浏览（File System Access API；不支持时回退文件选择）
+async function pickLocalDir() {
+  const picker = (window as any).showDirectoryPicker
+  if (!picker) {
+    ElMessage.info('当前浏览器不支持目录浏览，请使用「选择文件…」')
+    fileInputEl.value?.click()
+    return
+  }
+  try {
+    localDirHandle.value = await picker.call(window, { mode: 'read' })
+    localDirName.value = localDirHandle.value.name
+    localDirParent.value = null
+    localSel.value = new Set()
+    await readLocalDir()
+  } catch { /* 用户取消 */ }
+}
+async function readLocalDir() {
+  const out: any[] = []
+  for await (const [name, handle] of localDirHandle.value.entries()) {
+    let size = 0
+    if (handle.kind === 'file') {
+      try { size = (await handle.getFile()).size } catch { /* 忽略 */ }
+    }
+    out.push({ name, handle, isDir: handle.kind === 'directory', size })
+  }
+  out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
+  localEntries.value = out
+}
+async function openLocalDir(handle: any) {
+  localDirHandle.value = handle
+  localDirParent.value = null
+  localSel.value = new Set()
+  await readLocalDir()
+}
+function openXfer() {
+  xferDlg.value = true
+  onXferOpen()
+  loadRemote(remotePath.value)
+}
+function onXferOpen() {
+  remoteDest.value = remotePath.value
+  if (!localDirHandle.value && 'showDirectoryPicker' in window) {
+    pickLocalDir()
+  }
+}
+function toggleLocalSel(e: { name: string }) {
+  const s = new Set(localSel.value)
+  s.has(e.name) ? s.delete(e.name) : s.add(e.name)
+  localSel.value = s
+}
 async function doUpload() {
+  if (!remoteDest.value) { ElMessage.warning('未选中目的地：请先在右侧选定目的目录'); return }
   uploading.value = true
   try {
-    for (const f of localFiles.value) {
-      const form = new FormData()
-      form.append('file', f)
-      await api.sftpUpload(props.sessionId, remotePath.value, form)
+    if (localDirHandle.value) {
+      for (const name of localSel.value) {
+        const fh = await localDirHandle.value.getFileHandle(name)
+        const file = await fh.getFile()
+        const form = new FormData()
+        form.append('file', file)
+        await api.sftpUpload(props.sessionId, remoteDest.value, form, props.remoteNode)
+      }
+    } else {
+      for (const f of localFiles.value) {
+        const form = new FormData()
+        form.append('file', f)
+        await api.sftpUpload(props.sessionId, remoteDest.value, form, props.remoteNode)
+      }
     }
     ElMessage.success('上传完成')
-    localFiles.value = []
-    loadRemote()
+    localSel.value = new Set()
+    loadRemote(remoteDest.value)
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail ?? '上传失败')
   } finally { uploading.value = false }
 }
 async function doDownload() {
   if (!selectedRemote.value) return
-  const p = (remotePath.value === '/' ? '' : remotePath.value) + '/' + selectedRemote.value.name
-  await api.sftpDownload(props.sessionId, p, selectedRemote.value.name)
+  const p = joinRemote(selectedRemote.value.name)
+  await api.sftpDownload(props.sessionId, p, selectedRemote.value.name, props.remoteNode)
 }
 function toggleBar() {
   barVisible.value = !barVisible.value
@@ -602,6 +705,11 @@ onUnmounted(() => {
   display: flex; align-items: center; justify-content: center; color: var(--lh-muted); background: transparent; }
 .chat-tool:hover:not(:disabled) { color: var(--lh-fg); background: rgba(128,128,128,.15); }
 .chat-tool:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ---------- SFTP 附加 ---------- */
+.xfer-actions { display: flex; gap: 10px; margin-top: 10px; }
+.xfer-row.sel { background: var(--el-color-primary-light-9); }
+.xfer-path { font-weight: 400; color: var(--el-text-color-secondary); }
 
 /* 进出场动画 */
 .chat-pop-enter-active { transition: opacity .16s ease, transform .18s cubic-bezier(.34,1.5,.64,1); }
