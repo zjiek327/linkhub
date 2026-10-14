@@ -101,8 +101,8 @@ export const api = {
   session: (id: number) => http.get<Session>(`/sessions/${id}`).then(r => r.data),
   sftpList: (sid: number, path: string, node?: string) =>
     http.get(`/sessions/${sid}/sftp/list`, { params: { path, node } }).then(r => r.data),
-  sftpUpload: (sid: number, path: string, form: FormData, node?: string) =>
-    http.post(`/sessions/${sid}/sftp/upload?path=${encodeURIComponent(path)}&node=${node ?? ''}`, form,
+  sftpUpload: (sid: number, path: string, form: FormData, node?: string, sub?: string) =>
+    http.post(`/sessions/${sid}/sftp/upload?path=${encodeURIComponent(path)}&node=${node ?? ''}&sub=${encodeURIComponent(sub ?? '')}`, form,
       { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data),
   sftpDownload: async (sid: number, path: string, name: string, node?: string) => {
     const r = await http.get(`/sessions/${sid}/sftp/download`,

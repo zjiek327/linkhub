@@ -12,6 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/pkg/sftp"
+
 	"linkhub/internal/auth"
 	"linkhub/internal/connector"
 )
@@ -210,7 +212,16 @@ func (h *Handler) sftpExecLocal(w http.ResponseWriter, r *http.Request, sid int6
 		}
 		defer file.Close()
 		name := path.Base(header.Filename)
+		// sub=相对子路径（保持目录结构），自动创建父目录
+		sub := path.Clean("/" + r.URL.Query().Get("sub"))
 		dstPath := path.Join(dir, name)
+		if sub != "/" && sub != "." {
+			dstPath = path.Join(dir, strings.TrimPrefix(sub, "/"), name)
+			if err := sftpMkdirAll(client, path.Dir(dstPath)); err != nil {
+				jsonErr(w, 502, "创建目录失败: "+err.Error())
+				return
+			}
+		}
 		dst, err := client.Create(dstPath)
 		if err != nil {
 			jsonErr(w, 502, "创建远端文件失败: "+err.Error())
@@ -295,4 +306,19 @@ func (h *Handler) sftpUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.sftpExecLocal(w, r, id, "upload")
+}
+
+// sftpMkdirAll 逐级创建远端目录
+func sftpMkdirAll(client *sftp.Client, dir string) error {
+	if dir == "/" || dir == "." || dir == "" {
+		return nil
+	}
+	if _, err := client.Stat(dir); err == nil {
+		return nil
+	}
+	parent := path.Dir(dir)
+	if err := sftpMkdirAll(client, parent); err != nil {
+		return err
+	}
+	return client.Mkdir(dir)
 }

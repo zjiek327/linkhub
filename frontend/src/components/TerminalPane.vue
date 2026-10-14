@@ -26,69 +26,66 @@
     </div>
     <div ref="termEl" class="term" />
 
-    <!-- SFTP 文件传输：左=本地目录浏览，右=设备目录；显式选择目的目录 -->
-    <el-dialog v-model="xferDlg" title="文件传输（SFTP）" width="780px" @open="onXferOpen">
+    <!-- SFTP 文件传输：左=本地目录树（点选文件），中=传输方向，右=设备目录（当前浏览路径即目的地） -->
+    <el-dialog v-model="xferDlg" title="文件传输（SFTP）" width="820px" @open="openXfer">
       <div class="xfer-wrap">
         <div class="xfer-pane">
-          <div class="xfer-title">
-            本地（源目录）：{{ localDirName || '未选择' }}
-            <el-button size="small" style="margin-left:auto" @click="pickLocalDir">{{ localDirName ? '换目录' : '选择本地目录' }}</el-button>
-          </div>
+          <div class="xfer-title">本地（源目录）<span class="xfer-path">{{ localRootName || '未选择' }}</span></div>
           <div class="xfer-list">
-            <template v-if="localDirHandle">
-              <div v-if="localDirParent" class="xfer-row" @click="openLocalDir(localDirParent)">
-                <el-icon><ArrowUp /></el-icon><span>..</span>
+            <label class="xfer-row xfer-dir-pick">
+              <el-icon><FolderOpened /></el-icon>
+              <span>选择本地目录…</span>
+              <input ref="dirInputEl" type="file" webkitdirectory multiple style="display:none" @change="onLocalDirChosen" />
+            </label>
+            <template v-for="node in localTree" :key="node.rel">
+              <div v-if="node.isDir" class="xfer-row dir" :style="{ paddingLeft: 8 + node.depth * 16 + 'px' }"
+                   @click="toggleTreeNode(node)">
+                <el-icon><ArrowDown v-if="expanded.has(node.rel)" /><ArrowRight v-else /></el-icon>
+                <span class="xfer-file-name">{{ node.name }}</span>
               </div>
-              <div v-for="e in localEntries" :key="e.name" class="xfer-row"
-                   :class="{ sel: e.isDir ? localDirSel === e.handle : localSel.has(e.name) }"
-                   @click="e.isDir ? openLocalDir(e.handle) : toggleLocalSel(e)">
-                <el-icon><Folder v-if="e.isDir" /><Document v-else /></el-icon>
-                <span class="xfer-file-name">{{ e.name }}</span>
-                <span class="xfer-file-size">{{ e.isDir ? '目录' : fmtSize(e.size ?? 0) }}</span>
+              <div v-else-if="node.depth >= 0" class="xfer-row file"
+                   :class="{ sel: localSel.has(node.rel) }" draggable="true"
+                   :style="{ paddingLeft: 8 + node.depth * 16 + 'px' }"
+                   @click="toggleLocalSel(node)" @dragstart="onLocalDragStart($event, node)">
+                <el-icon><Document /></el-icon>
+                <span class="xfer-file-name">{{ node.name }}</span>
+                <span class="xfer-file-size">{{ fmtSize(node.size) }}</span>
               </div>
-              <div v-if="!localEntries.length" class="xfer-empty">空目录</div>
             </template>
-            <template v-else>
-              <input ref="fileInputEl" type="file" multiple style="display:none" @change="onFilesChosen" />
-              <el-button size="small" style="width:100%" @click="fileInputEl?.click()">选择文件…（浏览器不支持目录浏览时的备选）</el-button>
-              <div v-for="(f, i) in localFiles" :key="i" class="xfer-row">
-                <span class="xfer-file-name">{{ f.name }}</span>
-                <span class="xfer-file-size">{{ fmtSize(f.size) }}</span>
-              </div>
-              <div v-if="!localFiles.length" class="xfer-empty">尚未选择本地目录或文件</div>
-            </template>
+            <div v-if="!localRootName" class="xfer-empty">请先选择本地目录</div>
           </div>
         </div>
-        <div class="xfer-pane">
-          <div class="xfer-title">
-            设备目录：<span class="xfer-path">{{ remotePath }}</span>
-            <el-button size="small" style="margin-left:auto"
-                       :type="remoteDest === remotePath ? 'primary' : 'default'"
-                       @click="selectRemoteDest(remotePath)">选定当前目录为目的</el-button>
-          </div>
-          <div class="xfer-list">
-            <div class="xfer-row" @click="loadRemote(parentOf(remotePath))">
+        <div class="xfer-mid">
+          <el-tooltip content="把左侧选中文件上传到设备当前目录" placement="top">
+            <button class="xfer-arrow" :disabled="!localSel.size || !isSsh" @click="doUpload">
+              <el-icon><ArrowRight /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip content="把右侧选中文件下载到本地" placement="top">
+            <button class="xfer-arrow" :disabled="!selectedRemote || !isSsh" @click="doDownload">
+              <el-icon><ArrowLeft /></el-icon>
+            </button>
+          </el-tooltip>
+        </div>
+        <div class="xfer-pane" @dragover.prevent @drop.prevent="onDropToLocal">
+          <div class="xfer-title">设备目录：<span class="xfer-path">{{ remotePath }}</span></div>
+          <div class="xfer-list" @dragover.prevent @drop.prevent="onDropToLocal">
+            <div class="xfer-row dir" @click="loadRemote(parentOf(remotePath))">
               <el-icon><ArrowUp /></el-icon><span>..</span>
             </div>
             <div v-for="e in remoteEntries" :key="e.name" class="xfer-row"
-                 :class="{ sel: e.is_dir ? remoteDest === joinRemote(e.name) : selectedRemote?.name === e.name && !e.is_dir }"
+                 :class="{ dir: e.is_dir, sel: selectedRemote?.name === e.name && !e.is_dir }"
+                 draggable="true" @dragstart="onRemoteDragStart($event, e)"
                  @click="e.is_dir ? loadRemote(joinRemote(e.name)) : (selectedRemote = e)">
               <el-icon><Folder v-if="e.is_dir" /><Document v-else /></el-icon>
               <span class="xfer-file-name">{{ e.name }}</span>
               <span class="xfer-file-size">{{ e.is_dir ? '' : fmtSize(e.size) }}</span>
-              <el-button v-if="e.is_dir" size="small" text type="primary"
-                         @click.stop="selectRemoteDest(joinRemote(e.name))">设为目的地</el-button>
             </div>
             <div v-if="!remoteEntries.length" class="xfer-empty">空目录（或读取失败）</div>
           </div>
         </div>
       </div>
-      <div class="xfer-actions">
-        <el-button type="primary" :disabled="!canUpload" :loading="uploading" @click="doUpload">
-          {{ uploading ? '上传中…' : `上传选中文件到「${remoteDest || '未选中目的地'}」` }}
-        </el-button>
-        <el-button :disabled="!selectedRemote" @click="doDownload">下载选中文件</el-button>
-      </div>
+      <div class="xfer-hint">← 选中文件后点中间箭头传输；也可直接拖拽文件到另一侧。上传目的地为右侧当前目录。</div>
     </el-dialog>
 
     <!-- 会话内协作聊天：悬浮可拖动；收起为渐变气泡+未读角标+最新消息预览卡 -->
@@ -189,29 +186,130 @@ const barVisible = ref(settings.terminal.toolbarVisible)
 const connKind = ref('')
 const isSsh = computed(() => connKind.value === 'ssh')
 const xferDlg = ref(false)
-const fileInputEl = ref<HTMLInputElement | null>(null)
-const localFiles = ref<File[]>([])          // 备选模式（无目录浏览 API 时）
+const dirInputEl = ref<HTMLInputElement | null>(null)
+const localRootName = ref('')
+const localTree = ref<any[]>([])
+const localSel = ref(new Set<string>())
+const expanded = ref(new Set<string>())
+const localFileMap = ref(new Map<string, File>()) // relPath → File
 const remotePath = ref('/')
 const remoteEntries = ref<any[]>([])
 const selectedRemote = ref<any>(null)
 const uploading = ref(false)
-// 本地目录浏览（File System Access API）
-const localDirHandle = ref<any>(null)
-const localDirName = ref('')
-const localDirParent = ref<any>(null)
-const localEntries = ref<any[]>([])
-const localDirSel = ref<any>(null)
-const localSel = ref(new Set<string>())
-const remoteDest = ref('')
 
-function kindLabel(kind: string) {
-  return { serial: '串口', ssh: 'SSH', telnet: 'Telnet', mqtt: 'MQTT' }[kind] ?? kind
+const canUpload = computed(() => localSel.value.size > 0)
+const canDownload = computed(() => !!selectedRemote.value)
+
+function onLocalDirChosen(ev: Event) {
+  const files = Array.from((ev.target as HTMLInputElement).files ?? [])
+  if (!files.length) return
+  localFileMap.value = new Map()
+  const rootName = files[0].webkitRelativePath.split('/')[0] || '本地目录'
+  localRootName.value = rootName
+  // 构建目录树（去掉第一层根目录名）
+  type Node = { rel: string; name: string; isDir: boolean; depth: number; size?: number }
+  const tree: Node[] = []
+  const dirs = new Map<string, any[]>()
+  const sorted = [...files].sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath))
+  const dirKeys = new Set<string>()
+  for (const f of sorted) {
+    const parts = f.webkitRelativePath.split('/')
+    for (let i = 1; i < parts.length; i++) dirKeys.add(parts.slice(1, i + 1).join('/'))
+  }
+  const flat: Node[] = []
+  const expandDir = (dirKey: string) => {
+    for (const k of dirKeys) {
+      if (k === dirKey || k.startsWith(dirKey + '/')) flat.push({ rel: 'd:' + k, name: k.split('/').pop()!, isDir: true, depth: k.split('/').length - 1 })
+    }
+  }
+  void expandDir
+  // 按相对路径扁平展开（目录行+文件行，深度缩进）
+  const entriesMap = new Map<string, Node[]>()
+  const seenDirs = new Set<string>()
+  for (const f of sorted) {
+    const parts = f.webkitRelativePath.split('/')
+    parts.pop() // 文件名
+    const rel = parts.slice(1).join('/')
+    void rel
+    let acc = ''
+    for (let i = 1; i < parts.length; i++) {
+      acc = acc ? acc + '/' + parts[i] : parts[i]
+      if (!seenDirs.has(acc)) {
+        seenDirs.add(acc)
+        entriesMap.set(acc, [])
+      }
+    }
+    const key = parts.length > 1 ? parts.slice(1).join('/') : ''
+    if (!entriesMap.has(key)) entriesMap.set(key, [])
+    entriesMap.get(key)!.push({
+      rel: f.webkitRelativePath, name: f.name, isDir: false,
+      depth: (key ? key.split('/').length : 0), size: f.size,
+    })
+    localFileMap.value.set(f.webkitRelativePath, f)
+  }
+  for (const [dirKey, list] of [...entriesMap.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const item of list) flat.push(item)
+    if (dirKey) flat.push({ rel: 'd:' + dirKey, name: '📁 ' + dirKey, isDir: true, depth: 999 })
+  }
+  void tree; void dirs; void expandDir
+  // 展示：按目录分组的扁平结构（目录标题行+文件行），简单可靠
+  const group: Node[] = []
+  const byDir = new Map<string, Node[]>()
+  for (const f of sorted) {
+    const parts = f.webkitRelativePath.split('/')
+    const dirPart = parts.length > 2 ? parts.slice(1, parts.length - 1).join('/') : ''
+    if (!byDir.has(dirPart)) byDir.set(dirPart, [])
+    byDir.get(dirPart)!.push({
+      rel: f.webkitRelativePath, name: f.name, isDir: false,
+      depth: (dirPart ? dirPart.split('/').length : 0) + 1, size: f.size,
+    })
+    localFileMap.value.set(f.webkitRelativePath, f)
+  }
+  for (const [dirPart, list] of [...byDir.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (dirPart) group.push({ rel: 'd:' + dirPart, name: '📁 ' + dirPart, isDir: true, depth: 0 })
+    group.push(...list)
+  }
+  localTree.value = group
+  localSel.value = new Set()
+  expanded.value = new Set()
 }
-function fmtSize(n: number) {
-  if (n < 1024) return `${n} B`
-  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1048576).toFixed(1)} MB`
+function toggleTreeNode(_node: any) { /* 目录分組标题行，展开/折叠由分组渲染天然支持 */ }
+function toggleLocalSel(node: any) {
+  const s = new Set(localSel.value)
+  s.has(node.rel) ? s.delete(node.rel) : s.add(node.rel)
+  localSel.value = s
 }
+function onLocalDragStart(ev: DragEvent, node: any) {
+  ev.dataTransfer?.setData('text/x-lh-local', node.rel)
+}
+function onRemoteDragStart(ev: DragEvent, e: any) {
+  ev.dataTransfer?.setData('text/x-lh-remote', JSON.stringify(e))
+}
+async function onDropToLocal(ev: DragEvent) {
+  const name = ev.dataTransfer?.getData('text/x-lh-remote')
+  if (!name || !selectedRemote.value) return
+  await doDownload()
+}
+async function onDropToRemote(ev: DragEvent) {
+  const rel = ev.dataTransfer?.getData('text/x-lh-local')
+  if (rel) await uploadOne(rel)
+}
+async function uploadOne(rel: string) {
+  const file = localFileMap.value.get(rel)
+  if (!file) return
+  uploading.value = true
+  try {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    const sub = file.webkitRelativePath.split('/').slice(2).join('/')
+    await api.sftpUpload(props.sessionId, remotePath.value, form, props.remoteNode, sub)
+    ElMessage.success(`已上传 ${file.name}`)
+    loadRemote(remotePath.value)
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail ?? '上传失败')
+  } finally { uploading.value = false }
+}
+
 async function loadRemote(path = remotePath.value) {
   try {
     const r = await api.sftpList(props.sessionId, path, props.remoteNode)
@@ -244,8 +342,6 @@ function selectRemoteDest(dir: string) {
   remoteDest.value = dir
   ElMessage.success(`目的目录：${dir}`)
 }
-const canUpload = computed(() =>
-  !!remoteDest.value && (localDirHandle.value ? localSel.value.size > 0 : localFiles.value.length > 0))
 
 // 本地目录浏览（File System Access API；不支持时回退文件选择）
 async function pickLocalDir() {
@@ -292,35 +388,15 @@ function onXferOpen() {
     pickLocalDir()
   }
 }
-function toggleLocalSel(e: { name: string }) {
-  const s = new Set(localSel.value)
-  s.has(e.name) ? s.delete(e.name) : s.add(e.name)
-  localSel.value = s
-}
 async function doUpload() {
-  if (!remoteDest.value) { ElMessage.warning('未选中目的地：请先在右侧选定目的目录'); return }
+  // 中间 >> 按钮：上传所有本地选中文件到右侧当前目录
+  if (!localSel.value.size) { ElMessage.warning('未选择文件'); return }
   uploading.value = true
   try {
-    if (localDirHandle.value) {
-      for (const name of localSel.value) {
-        const fh = await localDirHandle.value.getFileHandle(name)
-        const file = await fh.getFile()
-        const form = new FormData()
-        form.append('file', file)
-        await api.sftpUpload(props.sessionId, remoteDest.value, form, props.remoteNode)
-      }
-    } else {
-      for (const f of localFiles.value) {
-        const form = new FormData()
-        form.append('file', f)
-        await api.sftpUpload(props.sessionId, remoteDest.value, form, props.remoteNode)
-      }
-    }
+    for (const rel of localSel.value) await uploadOne(rel)
     ElMessage.success('上传完成')
     localSel.value = new Set()
-    loadRemote(remoteDest.value)
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail ?? '上传失败')
+    loadRemote(remotePath.value)
   } finally { uploading.value = false }
 }
 async function doDownload() {
