@@ -248,6 +248,7 @@ async function removeConn(id: number) {
 
 async function openTerminal(row: Connection) {
   const tabName = encodeURIComponent([device.value?.name, row.name].filter(Boolean).join(' · '))
+  const kindQ = `&kind=${row.kind || ''}`
   try {
   const ro = device.value?.remote_readonly ? '&readonly=1' : ''
     if (isRemote) {
@@ -257,7 +258,7 @@ async function openTerminal(row: Connection) {
       const sess = await api.openSession(row.id)
       const node = sess.node_id && sess.node_id !== 'local' && sess.node_id !== selfNodeId.value
         ? `&node=${sess.node_id}` : ''
-      router.push(`/terminal/${sess.id}?conn=${row.id}&name=${tabName}${ro}${node}`)
+      router.push(`/terminal/${sess.id}?conn=${row.id}&name=${tabName}${kindQ}${ro}${node}`)
     }
   } catch (e: any) {
     const detail = e.response?.data?.detail

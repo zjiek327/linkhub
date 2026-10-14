@@ -13,7 +13,7 @@
       </el-tabs>
     </div>
     <div class="panes">
-      <TerminalPane v-for="t in tabs" :key="t.id"
+      <TerminalPane v-for="t in tabs" :key="t.id" :kind="t.kind"
                     v-show="String(t.id) === activeId"
                     :ref="el => paneRefs[t.id] = el"
                     :session-id="t.id" :conn-id="t.connId" :remote-node="t.remoteNode"
@@ -29,7 +29,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalPane from '../components/TerminalPane.vue'
 
-interface Tab { id: number; connId: number | null; remoteNode: string; name: string; online: boolean }
+interface Tab { id: number; connId: number | null; remoteNode: string; name: string; online: boolean; kind?: string }
 
 const route = useRoute()
 const router = useRouter()
@@ -55,12 +55,12 @@ function restore() {
 }
 restore()
 
-function openTab(payload: { id: number; connId?: number | null; remoteNode?: string; name?: string }) {
+function openTab(payload: { id: number; connId?: number | null; remoteNode?: string; name?: string; kind?: string }) {
   const id = Number(payload.id)
   let t = tabs.value.find(x => x.id === id)
   if (!t) {
     t = { id, connId: payload.connId ?? null, remoteNode: payload.remoteNode ?? '',
-          name: payload.name ?? '', online: true }
+          name: payload.name ?? '', online: true, kind: payload.kind ?? '' }
     tabs.value.push(t)
   }
   if (!t.name) enrichName(t)
@@ -106,6 +106,7 @@ watch(() => [route.params.sessionId, route.query], () => {
     connId: route.query.conn ? Number(route.query.conn) : null,
     remoteNode: (route.query.node as string) || '',
     name: (route.query.name as string) || '',
+    kind: (route.query.kind as string) || '',
   })
 }, { immediate: true, deep: true })
 </script>

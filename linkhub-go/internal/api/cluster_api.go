@@ -450,6 +450,7 @@ func (h *ClusterHandler) internalOpen(w http.ResponseWriter, r *http.Request) {
 				jsonErr(w, 409, err.Error())
 				return
 			}
+			out["kind"] = c.Kind
 			jsonOut(w, out)
 			return
 		}

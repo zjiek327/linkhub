@@ -701,6 +701,7 @@ func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 			SessionID int64  `json:"session_id"`
 			ID        int64  `json:"id"`
 			NodeID    string `json:"node_id"`
+			Kind      string `json:"kind"`
 		}
 		body := map[string]interface{}{"kind": c.Kind, "params": c.Params, "device_id": c.DeviceID}
 		var err error

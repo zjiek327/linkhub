@@ -23,14 +23,6 @@
         <el-button v-if="amWriter || !remoteNode" size="small" type="danger" plain :disabled="status === 'closed'" @click="close">{{ $t('terminal.closeSession') }}</el-button>
       </el-tooltip>
       <span style="flex:1" />
-      <el-tooltip :content="barVisible ? '收起功能区' : '展开功能区'" placement="bottom">
-        <span class="bar-toggle" @click="toggleBar"><el-icon><ArrowUp v-if="barVisible" /><ArrowDown v-else /></el-icon></span>
-      </el-tooltip>
-    </div>
-    <div v-if="!barVisible" class="bar bar-min">
-      <el-tooltip content="展开功能区" placement="bottom">
-        <span class="bar-toggle" @click="toggleBar"><el-icon><ArrowDown /></el-icon></span>
-      </el-tooltip>
     </div>
     <div ref="termEl" class="term" />
 
@@ -152,7 +144,8 @@ const props = withDefaults(defineProps<{
   remoteNode?: string
   displayName?: string
   readonly?: boolean
-}>(), { remoteNode: '', displayName: '', readonly: false })
+  kind?: string
+}>(), { remoteNode: '', displayName: '', readonly: false, kind: '' })
 const emit = defineEmits<{
   status: [s: { online: boolean; name?: string }]
   openNew: [payload: { id: number; connId?: number | null; remoteNode?: string; name?: string }]
@@ -245,7 +238,7 @@ const cid = (() => {
   if (!v) { v = 'cid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12); sessionStorage.setItem('linkhub_cid', v) }
   return v
 })()
-const myName = '用户-' + cid.replace(/^cid-/, '').slice(0, 6)
+let myName = '用户-' + cid.replace(/^cid-/, '').slice(0, 6)
 
 // ---------- 会话内聊天 ----------
 const chatVisible = ref(true)
@@ -269,16 +262,18 @@ function sendChat() {
 }
 function chatDragStart(ev: MouseEvent) {
   const el = (ev.currentTarget as HTMLElement).parentElement!
-  const startX = ev.clientX - chatPos.value.x
-  const startY = ev.clientY - chatPos.value.y
+  // 以实际渲染位置为基准（避免任何状态不同步导致拖动时跳位）
+  const rect = el.getBoundingClientRect()
+  const offX = ev.clientX - rect.left
+  const offY = ev.clientY - rect.top
   chatDragMoved = false
   const move = (e: MouseEvent) => {
     if (Math.abs(e.clientX - ev.clientX) + Math.abs(e.clientY - ev.clientY) > 4) chatDragMoved = true
     const w = el.parentElement?.clientWidth ?? window.innerWidth
     const h = el.parentElement?.clientHeight ?? window.innerHeight
     chatPos.value = {
-      x: Math.min(Math.max(0, e.clientX - startX), Math.max(0, w - el.offsetWidth)),
-      y: Math.min(Math.max(0, e.clientY - startY), Math.max(0, h - 40)),
+      x: Math.min(Math.max(0, e.clientX - offX), Math.max(0, w - el.offsetWidth)),
+      y: Math.min(Math.max(0, e.clientY - offY), Math.max(0, h - 40)),
     }
   }
   const up = () => {
@@ -447,8 +442,9 @@ function connectWs() {
   }
 }
 
-// 连接方式：会话详情带出（工具栏标签 + SFTP 可用性）
-watch(() => props.sessionId, async () => {
+// 连接方式：优先 URL 参数（跨节点会话本地查不到会话行），本地会话回退接口
+watch(() => [props.sessionId, props.kind], async () => {
+  if (props.kind) { connKind.value = props.kind; return }
   try {
     const s = await api.session(props.sessionId)
     connKind.value = s.kind ?? ''
@@ -490,7 +486,12 @@ async function close() {
 }
 
 onMounted(async () => {
-  try { selfNodeId = (await api.clusterInfo()).node_id } catch { /* 单机 */ }
+  try {
+    const info = await api.clusterInfo()
+    selfNodeId = info.node_id
+    // 聊天名带集群节点名：多端协作时一眼看出对方在哪个节点
+    if (info.name) myName = `${myName}@${info.name}`
+  } catch { /* 单机 */ }
   resetChat()
   if (!sessionStorage.getItem('linkhub_chat_pos')) {
     nextTick(() => {
@@ -519,9 +520,6 @@ onUnmounted(() => {
   color: var(--lh-fg); border-bottom: 1px solid var(--lh-panel-border); }
 .bar .title { font-weight: 600; }
 .bar .err { color: #f56c6c; font-size: 12px; }
-.bar-toggle { cursor: pointer; color: var(--lh-muted); display: flex; align-items: center; padding: 2px; border-radius: 4px; }
-.bar-toggle:hover { color: var(--lh-fg); background: rgba(128,128,128,.15); }
-.bar-min { padding: 3px 10px; justify-content: flex-end; }
 .term { flex: 1; padding: 6px; overflow: hidden; }
 /* ---------- 会话聊天（跟随主题强调色） ---------- */
 .pane { position: relative; }

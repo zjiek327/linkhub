@@ -36,7 +36,10 @@ export interface Settings {
 
 // ---------- 界面风格预设 ----------
 // 每套预设是一组 CSS 变量：侧栏/工作台/面板/强调色全部由它驱动，保证各区域同一风格
-export type StylePresetKey = 'ocean' | 'forest' | 'sunset' | 'graphite' | 'daylight'
+export type StylePresetKey =
+  | 'ocean' | 'forest' | 'sunset' | 'graphite'
+  | 'ocean-light' | 'forest-light' | 'sunset-light' | 'graphite-light'
+  | 'daylight'
 
 export interface StylePreset {
   label: string
@@ -61,6 +64,22 @@ export const STYLE_PRESETS: Record<StylePresetKey, StylePreset> = {
     '--lh-sidebar-bg': '#16181b', '--lh-sidebar-active': '#23272d', '--lh-sidebar-fg': '#9aa1a9',
     '--lh-accent': '#39b3a6', '--lh-workbench-bg': '#0e1012', '--lh-panel-bg': '#17191d',
     '--lh-panel-border': '#272b31', '--lh-fg': '#d9dde2', '--lh-muted': '#8b929a' } },
+  'ocean-light': { label: '深海蓝 · 亮', dark: false, vars: {
+    '--lh-sidebar-bg': '#eaf1f8', '--lh-sidebar-active': '#d7e5f7', '--lh-sidebar-fg': '#43566b',
+    '--lh-accent': '#1f6feb', '--lh-workbench-bg': '#ffffff', '--lh-panel-bg': '#f2f5f9',
+    '--lh-panel-border': '#dfe5ec', '--lh-fg': '#2b3138', '--lh-muted': '#7a8694' } },
+  'forest-light': { label: '松林绿 · 亮', dark: false, vars: {
+    '--lh-sidebar-bg': '#e9f4ee', '--lh-sidebar-active': '#d4e9dd', '--lh-sidebar-fg': '#3f5c4e',
+    '--lh-accent': '#1f8f5a', '--lh-workbench-bg': '#ffffff', '--lh-panel-bg': '#eef6f1',
+    '--lh-panel-border': '#d9e7de', '--lh-fg': '#243329', '--lh-muted': '#6f8a7c' } },
+  'sunset-light': { label: '暖沙橙 · 亮', dark: false, vars: {
+    '--lh-sidebar-bg': '#fbf1e8', '--lh-sidebar-active': '#f6e2ce', '--lh-sidebar-fg': '#6b5744',
+    '--lh-accent': '#d97a2b', '--lh-workbench-bg': '#ffffff', '--lh-panel-bg': '#faf3ea',
+    '--lh-panel-border': '#eedfd0', '--lh-fg': '#3a2f26', '--lh-muted': '#a08b76' } },
+  'graphite-light': { label: '石墨青 · 亮', dark: false, vars: {
+    '--lh-sidebar-bg': '#f2f3f5', '--lh-sidebar-active': '#e4e8ec', '--lh-sidebar-fg': '#4c545d',
+    '--lh-accent': '#2b8f85', '--lh-workbench-bg': '#ffffff', '--lh-panel-bg': '#f2f3f5',
+    '--lh-panel-border': '#e1e4e8', '--lh-fg': '#2c3036', '--lh-muted': '#7c838c' } },
   daylight: { label: '清晨亮', dark: false, vars: {
     '--lh-sidebar-bg': '#f4f6f9', '--lh-sidebar-active': '#e8eefb', '--lh-sidebar-fg': '#5a6472',
     '--lh-accent': '#1f6feb', '--lh-workbench-bg': '#ffffff', '--lh-panel-bg': '#f4f6f9',
