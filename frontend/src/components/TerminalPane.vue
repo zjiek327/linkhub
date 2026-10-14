@@ -261,25 +261,26 @@ function sendChat() {
   chatDraft.value = ''
 }
 function chatDragStart(ev: MouseEvent) {
-  const el = (ev.currentTarget as HTMLElement).parentElement!
-  // 以实际渲染位置为基准（避免任何状态不同步导致拖动时跳位）
-  const rect = el.getBoundingClientRect()
+  // el = 整个聊天挂件（fab 与标题栏的共同祖先）；边界容器 = 终端窗格 .pane
+  const widget = (ev.currentTarget as HTMLElement).closest('.chat-widget') as HTMLElement
+  const pane = widget.closest('.pane') as HTMLElement
+  const rect = widget.getBoundingClientRect()
   const offX = ev.clientX - rect.left
   const offY = ev.clientY - rect.top
   chatDragMoved = false
   const move = (e: MouseEvent) => {
     if (Math.abs(e.clientX - ev.clientX) + Math.abs(e.clientY - ev.clientY) > 4) chatDragMoved = true
-    const w = el.parentElement?.clientWidth ?? window.innerWidth
-    const h = el.parentElement?.clientHeight ?? window.innerHeight
+    const maxX = Math.max(0, (pane?.clientWidth ?? window.innerWidth) - widget.offsetWidth)
+    const maxY = Math.max(0, (pane?.clientHeight ?? window.innerHeight) - widget.offsetHeight)
     chatPos.value = {
-      x: Math.min(Math.max(0, e.clientX - offX), Math.max(0, w - el.offsetWidth)),
-      y: Math.min(Math.max(0, e.clientY - offY), Math.max(0, h - 40)),
+      x: Math.min(Math.max(0, e.clientX - offX), maxX),
+      y: Math.min(Math.max(0, e.clientY - offY), maxY),
     }
   }
   const up = () => {
     window.removeEventListener('mousemove', move)
     window.removeEventListener('mouseup', up)
-    sessionStorage.setItem('linkhub_chat_pos', JSON.stringify(chatPos.value))
+    localStorage.setItem('linkhub_chat_pos', JSON.stringify(chatPos.value)) // 跨会话停留
   }
   window.addEventListener('mousemove', move)
   window.addEventListener('mouseup', up)
@@ -289,7 +290,7 @@ function resetChat() {
   chatUnread.value = 0
   chatOpen.value = false
   chatDraft.value = ''
-  const saved = sessionStorage.getItem('linkhub_chat_pos')
+  const saved = localStorage.getItem('linkhub_chat_pos')
   chatPos.value = saved ? JSON.parse(saved) : { x: 0, y: 0 }
 }
 const amWriter = ref(true)
