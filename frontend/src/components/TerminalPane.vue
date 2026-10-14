@@ -110,8 +110,8 @@
             <div v-if="!chatMsgs.length" class="chat-empty">{{ $t('terminal.chatEmpty') }}</div>
           </div>
           <div class="chat-input">
-            <el-tooltip content="文件传输（仅 SSH 会话支持）" placement="top">
-              <button class="chat-tool" :disabled="!isSsh" :title="isSsh ? '文件传输' : '仅 SSH 会话支持文件传输'" @click="openXfer">
+            <el-tooltip content="文件传输（仅 SSH 会话且在线时支持）" placement="top">
+              <button class="chat-tool" :disabled="!isSsh || status !== 'online'" :title="!isSsh ? '仅 SSH 会话支持文件传输' : status !== 'online' ? '会话不在线，先点重连' : '文件传输'" @click="openXfer">
                 <el-icon><FolderOpened /></el-icon>
               </button>
             </el-tooltip>
@@ -192,6 +192,7 @@ const localTree = ref<any[]>([])
 const localSel = ref(new Set<string>())
 const expanded = ref(new Set<string>())
 const localFileMap = ref(new Map<string, File>()) // relPath → File
+const remoteDest = ref('')
 const remotePath = ref('/')
 const remoteEntries = ref<any[]>([])
 const selectedRemote = ref<any>(null)
@@ -330,6 +331,11 @@ function onFilesChosen(ev: Event) {
   const files = (ev.target as HTMLInputElement).files
   localFiles.value = files ? Array.from(files) : []
 }
+function fmtSize(n: number) {
+  if (n < 1024) return `${n} B`
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1048576).toFixed(1)} MB`
+}
 function joinRemote(name: string) {
   return (remotePath.value === '/' ? '' : remotePath.value) + '/' + name
 }
@@ -377,14 +383,20 @@ async function openLocalDir(handle: any) {
   localSel.value = new Set()
   await readLocalDir()
 }
-function openXfer() {
+async function openXfer() {
+  if (status.value !== 'online') {
+    // 会话不在线时先自动重连，再开对话框（免去用户先点"重连"的额外步骤）
+    reconnect()
+    return
+  }
   xferDlg.value = true
   onXferOpen()
   loadRemote(remotePath.value)
 }
 function onXferOpen() {
-  remoteDest.value = remotePath.value
-  if (!localDirHandle.value && 'showDirectoryPicker' in window) {
+  // 打开时把右栏当前路径设为目的地（上传落到此处）
+  if (!remoteDest.value) remoteDest.value = remotePath.value
+  if (!localRootName.value && (window as any).showDirectoryPicker) {
     pickLocalDir()
   }
 }
@@ -640,10 +652,19 @@ async function loadStatus() {
   } catch { /* 会话可能刚关闭 */ }
 }
 
-async function reconnect() {
+let xferPending = false
+function reconnect() {
+  xferPending = true
+  reconnectImpl()
+}
+async function reconnectImpl() {
   reconnecting.value = true
   try {
-    if (!sessionDead) { connectWs(); return }
+    if (!sessionDead) {
+      connectWs()
+      if (xferPending) { xferPending = false; setTimeout(() => openXfer(), 800) }
+      return
+    }
     if (!props.connId) { ElMessage.warning('缺少连接配置信息，请回设备详情页重新打开'); return }
     const r = props.remoteNode
       ? await api.proxyOpen(props.remoteNode, props.connId)
