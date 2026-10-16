@@ -436,7 +436,15 @@ const lastChat = computed(() => chatMsgs.value.at(-1) ?? null)
 
 function toggleChat() {
   chatOpen.value = !chatOpen.value
-  if (chatOpen.value) { chatUnread.value = 0; scrollChat() }
+  if (chatOpen.value) {
+    chatUnread.value = 0
+    // 默认位置：工具栏聊天图标正下方
+    if (!localStorage.getItem('linkhub_chat_pos')) {
+      const pane = document.querySelector('.pane')
+      if (pane) chatPos.value = { x: Math.max(8, pane.clientWidth - 320), y: 60 }
+    }
+    scrollChat()
+  }
 }
 function openChat() { chatOpen.value = true; chatUnread.value = 0; scrollChat() }
 let chatDragMoved = false
@@ -763,7 +771,7 @@ onUnmounted(() => {
 .chat-preview-text { color: var(--lh-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 展开态：面板 */
-.chat-panel { width: 300px; border-radius: 12px; overflow: hidden;
+.chat-panel { border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;
   border: 1px solid var(--lh-panel-border);
   box-shadow: 0 10px 36px rgba(0,0,0,.5); }
 .chat-head { height: 38px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between;
@@ -774,7 +782,7 @@ onUnmounted(() => {
   font-size: 11px; line-height: 17px; text-align: center; font-weight: 700; }
 .chat-min { cursor: pointer; display: flex; opacity: .8; padding: 2px; border-radius: 4px; }
 .chat-min:hover { opacity: 1; background: rgba(255,255,255,.15); }
-.chat-body { height: 230px; overflow-y: auto; padding: 10px;
+.chat-body { flex: 1; overflow-y: auto; padding: 10px; min-height: 0;
   background: var(--lh-workbench-bg);
   backdrop-filter: blur(10px); }
 .chat-body::-webkit-scrollbar { width: 6px; }
@@ -790,6 +798,9 @@ onUnmounted(() => {
 .chat-msg.me .chat-text { background: var(--lh-accent); border-color: transparent; color: #fff;
   border-radius: 10px 10px 3px 10px; }
 .chat-empty { color: var(--lh-muted); font-size: 12px; text-align: center; padding-top: 92px; }
+.chat-resize { height: 12px; display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 6px; cursor: nwse-resize; color: var(--lh-muted); background: var(--lh-panel-bg); }
+.chat-resize:hover { color: var(--lh-fg); }
 .chat-input { display: flex; align-items: center; gap: 8px; padding: 8px;
   background: var(--lh-panel-bg); border-top: 1px solid var(--lh-panel-border); }
 .chat-input :deep(.el-input__wrapper) { border-radius: 16px; box-shadow: 0 0 0 1px var(--lh-panel-border) inset; }
