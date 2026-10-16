@@ -100,9 +100,9 @@
     </el-dialog>
 
     <!-- 会话内协作聊天：悬浮可拖动；收起为渐变气泡+未读角标+最新消息预览卡 -->
-    <div v-if="chatVisible" class="chat-widget" :style="{ left: chatPos.x + 'px', top: chatPos.y + 'px' }">
+    <div v-if="chatVisible && chatOpen" class="chat-widget" :style="{ left: chatPos.x + 'px', top: chatPos.y + 'px', width: chatSize.w + 'px' }">
       <Transition name="chat-pop">
-        <div v-if="chatOpen" class="chat-panel">
+        <div v-if="chatOpen" class="chat-panel" :style="{ height: chatSize.h + 'px' }">
           <div class="chat-head" @mousedown.prevent="chatDragStart">
             <span class="chat-head-title">
               <el-icon><ChatDotRound /></el-icon>
@@ -132,20 +132,9 @@
               <el-icon><Promotion /></el-icon>
             </button>
           </div>
-        </div>
-      </Transition>
-      <Transition name="chat-pop">
-        <div v-if="!chatOpen" class="chat-fab-row">
-          <Transition name="chat-fade">
-            <div v-if="lastChat" class="chat-preview" @click="chatClick">
-              <span class="chat-preview-name">{{ lastChat.from === cid ? $t('terminal.chatMe') : lastChat.name }}</span>
-              <span class="chat-preview-text">{{ lastChat.text }}</span>
-            </div>
-          </Transition>
-          <button class="chat-fab" :title="$t('terminal.chatTip')" @mousedown.prevent="chatDragStart" @click="chatClick">
-            <el-icon><ChatDotRound /></el-icon>
-            <span v-if="chatUnread" class="chat-badge">{{ chatUnread > 9 ? '9+' : chatUnread }}</span>
-          </button>
+          <div class="chat-resize" @mousedown.prevent.stop="chatResizeStart">
+            <el-icon><Plus /></el-icon>
+          </div>
         </div>
       </Transition>
     </div>
@@ -192,7 +181,6 @@ let stopWatch: (() => void) | null = null
 let sizeSynced = false
 let sessionDead = false
 let closedAnnounced = false
-const barVisible = ref(settings.terminal.toolbarVisible)
 // 连接方式 + SFTP 文件传输
 const connKind = ref('')
 const isSsh = computed(() => connKind.value === 'ssh')
@@ -427,12 +415,6 @@ async function doDownload() {
   const p = joinRemote(selectedRemote.value.name)
   await api.sftpDownload(props.sessionId, p, selectedRemote.value.name, props.remoteNode)
 }
-function toggleBar() {
-  barVisible.value = !barVisible.value
-  settings.terminal.toolbarVisible = barVisible.value
-  nextTick(() => paneFit())
-}
-function paneFit() { fit?.fit() }
 const encoder = new TextEncoder()
 
 const cid = (() => {
@@ -467,26 +449,41 @@ function sendChat() {
   chatDraft.value = ''
 }
 function chatDragStart(ev: MouseEvent) {
-  // el = 整个聊天挂件（fab 与标题栏的共同祖先）；边界容器 = 终端窗格 .pane
-  const widget = (ev.currentTarget as HTMLElement).closest('.chat-widget') as HTMLElement
-  const pane = widget.closest('.pane') as HTMLElement
-  const rect = widget.getBoundingClientRect()
-  const offX = ev.clientX - rect.left
-  const offY = ev.clientY - rect.top
+  ev.preventDefault()
+  // mouse delta 方式：初始鼠标坐标 + 初始挂件位置，避免坐标系混用导致跳位
+  const startX = ev.clientX
+  const startY = ev.clientY
+  const startPos = { ...chatPos.value }
   chatDragMoved = false
   const move = (e: MouseEvent) => {
-    if (Math.abs(e.clientX - ev.clientX) + Math.abs(e.clientY - ev.clientY) > 4) chatDragMoved = true
-    const maxX = Math.max(0, (pane?.clientWidth ?? window.innerWidth) - widget.offsetWidth)
-    const maxY = Math.max(0, (pane?.clientHeight ?? window.innerHeight) - widget.offsetHeight)
-    chatPos.value = {
-      x: Math.min(Math.max(0, e.clientX - offX), maxX),
-      y: Math.min(Math.max(0, e.clientY - offY), maxY),
+    if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 4) chatDragMoved = true
+    chatPos.value = { x: startPos.x + e.clientX - startX, y: startPos.y + e.clientY - startY }
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    localStorage.setItem('linkhub_chat_pos', JSON.stringify(chatPos.value))
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
+const chatSize = ref({ w: 300, h: 340 })
+function chatResizeStart(ev: MouseEvent) {
+  ev.preventDefault()
+  const startX = ev.clientX
+  const startY = ev.clientY
+  const startW = chatSize.value.w
+  const startH = chatSize.value.h
+  const move = (e: MouseEvent) => {
+    chatSize.value = {
+      w: Math.max(240, startW + e.clientX - startX),
+      h: Math.max(200, startH + e.clientY - startY),
     }
   }
   const up = () => {
     window.removeEventListener('mousemove', move)
     window.removeEventListener('mouseup', up)
-    localStorage.setItem('linkhub_chat_pos', JSON.stringify(chatPos.value)) // 跨会话停留
+    localStorage.setItem('linkhub_chat_size', JSON.stringify(chatSize.value))
   }
   window.addEventListener('mousemove', move)
   window.addEventListener('mouseup', up)
@@ -496,8 +493,10 @@ function resetChat() {
   chatUnread.value = 0
   chatOpen.value = false
   chatDraft.value = ''
-  const saved = localStorage.getItem('linkhub_chat_pos')
-  chatPos.value = saved ? JSON.parse(saved) : { x: 0, y: 0 }
+  const savedPos = localStorage.getItem('linkhub_chat_pos')
+  chatPos.value = savedPos ? JSON.parse(savedPos) : { x: 0, y: 0 }
+  const savedSize = localStorage.getItem('linkhub_chat_size')
+  chatSize.value = savedSize ? JSON.parse(savedSize) : { w: 300, h: 340 }
 }
 const amWriter = ref(true)
 const viewers = ref(1)
