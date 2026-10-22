@@ -561,7 +561,14 @@ function initTerm() {
       term.options.theme = terminalThemeOf()
       fit?.fit()
     }, { deep: true })
-    term.onData(d => { if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(d)) })
+    // xterm 对设备查询（ESC[6n 等）的自动应答（CPR `ESC[行;列R`、DA `ESC[?..c`）也走 onData，
+    // 不过滤会注入串口 shell 被当命令执行（command not found: [60;2R），ESC[ 还会让行编辑
+    // 进入转义解析态吞掉后续按键（表现为有时无法输入）。用户键入不会产生这种序列，安全过滤。
+    const AUTO_REPLY = /\x1b\[\d+;\d+R|\x1b\[\?[\d;]*c/g
+    term.onData(d => {
+      const out = d.replace(AUTO_REPLY, '')
+      if (out && ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(out))
+    })
   } else {
     term.reset()
     fit?.fit()
