@@ -56,6 +56,10 @@
           <span class="hint">窗口变化时自动向远端注入 stty 对齐终端尺寸（tmux/vim 用）；
             注意：登录提示符阶段会注入成用户名，此时请用终端工具栏的「⇲ 适配大小」手动同步</span>
         </el-form-item>
+        <el-form-item :label="$t('settings.scrollback')">
+          <el-input-number v-model="settings.terminal.scrollback" :min="1000" :max="200000" :step="1000" />
+          <span class="hint">{{ $t('settings.scrollbackTip') }}</span>
+        </el-form-item>
         <el-form-item label="预览">
           <div class="preview" :style="previewStyle">pi@raspberrypi:~$ uname -a<br/>Linux raspberrypi 6.6.31 aarch64 GNU/Linux</div>
         </el-form-item>

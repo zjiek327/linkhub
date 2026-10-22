@@ -47,6 +47,7 @@ const zh = {
     terminal: '终端', fontSize: '字号', fontFamily: '字体', theme: '配色主题',
     customBg: '自定义背景', resetTheme: '恢复主题默认', autoSyncSize: '自动同步尺寸',
     autoSyncTip: '窗口变化时自动向远端注入 stty 对齐终端尺寸；登录提示符阶段会注入成用户名',
+    scrollback: '回滚行数', scrollbackTip: '终端可回看的历史行数，刷屏快的会话可调大；调小立即裁剪多余历史',
     preview: '预览', language: '语言', langTip: '设置自动保存',
   },
   cluster: {
@@ -114,6 +115,7 @@ const en: typeof zh = {
     terminal: 'Terminal', fontSize: 'Font Size', fontFamily: 'Font', theme: 'Theme',
     customBg: 'Custom BG', resetTheme: 'Reset to theme', autoSyncSize: 'Auto-sync size',
     autoSyncTip: 'Auto-inject stty on window resize; at login prompt it becomes a username',
+    scrollback: 'Scrollback', scrollbackTip: 'Lines of terminal history kept; raise for noisy sessions, lowering trims immediately',
     preview: 'Preview', language: 'Language', langTip: 'Settings are saved automatically',
   },
   cluster: {

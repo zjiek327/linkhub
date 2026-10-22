@@ -31,6 +31,7 @@ export interface Settings {
     background: string   // 空 = 跟随主题
     autoSyncSize: boolean  // 窗口变化时自动注入 stty 同步尺寸（串口无尺寸协商）
     toolbarVisible: boolean // 终端功能区（工具栏）显示
+    scrollback: number    // 终端回滚历史行数
   }
 }
 
@@ -90,7 +91,7 @@ const DEFAULTS: Settings = {
   themeMode: 'dark',
   stylePreset: 'ocean',
   language: 'system',
-  terminal: { fontSize: 14, fontFamily: FONT_FAMILIES[0].value, theme: 'dark', background: '', autoSyncSize: false, toolbarVisible: true },
+  terminal: { fontSize: 14, fontFamily: FONT_FAMILIES[0].value, theme: 'dark', background: '', autoSyncSize: false, toolbarVisible: true, scrollback: 20000 },
 }
 
 function load(): Settings {

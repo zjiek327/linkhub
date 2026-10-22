@@ -544,6 +544,7 @@ function initTerm() {
     term = new Terminal({
       fontFamily: settings.terminal.fontFamily,
       fontSize: settings.terminal.fontSize, cursorBlink: true, convertEol: false,
+      scrollback: settings.terminal.scrollback,
       theme: terminalThemeOf(),
     })
     fit = new FitAddon()
@@ -556,6 +557,7 @@ function initTerm() {
       if (!term) return
       term.options.fontFamily = settings.terminal.fontFamily
       term.options.fontSize = settings.terminal.fontSize
+      term.options.scrollback = settings.terminal.scrollback
       term.options.theme = terminalThemeOf()
       fit?.fit()
     }, { deep: true })
