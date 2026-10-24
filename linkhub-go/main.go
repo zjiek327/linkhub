@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"linkhub/internal/automation"
 	"linkhub/internal/cluster"
 	"linkhub/internal/config"
+	"linkhub/internal/desktop"
 	"linkhub/internal/events"
 	"linkhub/internal/session"
 	"linkhub/internal/store"
@@ -26,6 +28,33 @@ func randHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+// primaryLANAddr 推导集群广播地址：UDP 假连做路由查询（不产生实际流量）取出口 IP，
+// 失败则遍历网卡取第一个非回环 IPv4，最终回退 127.0.0.1
+func primaryLANAddr(port int) string {
+	if conn, err := net.Dial("udp", "198.51.100.1:80"); err == nil {
+		defer conn.Close()
+		if a, ok := conn.LocalAddr().(*net.UDPAddr); ok && !a.IP.IsLoopback() && a.IP.To4() != nil {
+			return fmt.Sprintf("http://%s:%d", a.IP.String(), port)
+		}
+	}
+	if ifs, err := net.Interfaces(); err == nil {
+		for _, ifi := range ifs {
+			if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, _ := ifi.Addrs()
+			for _, a := range addrs {
+				if ipnet, ok := a.(*net.IPNet); ok {
+					if ip := ipnet.IP.To4(); ip != nil && !ip.IsLoopback() {
+						return fmt.Sprintf("http://%s:%d", ip.String(), port)
+					}
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 func main() {
@@ -75,7 +104,9 @@ func main() {
 		}
 		adv := cfg.AdvertiseAddr
 		if adv == "" {
-			adv = fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+			// 默认 127.0.0.1 会让其他节点拿着回环地址来连（发现成功但握手必败），自动推导 LAN IP
+			adv = primaryLANAddr(cfg.Port)
+			log.Printf("未配置 LINKHUB_ADVERTISE_ADDR，自动推导广播地址: %s（多网卡机器若不正确请显式配置）", adv)
 		}
 		cl = cluster.NewCluster(st, nodeID, cfg.NodeName, adv, cfg.ClusterToken)
 		cl.SetDesktopPort(cfg.DesktopPort)
@@ -146,8 +177,24 @@ func main() {
 	r.Route("/api/desktop", func(ar chi.Router) {
 		ar.Use(mw.User)
 		ar.Get("/capability", deskH.Capability)
+		ar.Post("/setup", deskH.Setup)
 	})
 	r.Get("/ws/desktop", deskH.WS)
+	// 节点间内部：桌面安装辅助的落点（集群令牌校验，转发链路见 internal/forward）
+	if cl != nil {
+		r.Post("/api/cluster/internal/desktop/setup", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-LinkHub-Token") != cl.Token() {
+				http.Error(w, "令牌无效", http.StatusForbidden)
+				return
+			}
+			var body struct {
+				Password string `json:"password"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(desktop.Setup(cfg.DesktopPort, body.Password))
+		})
+	}
 
 	if cl != nil {
 		r.Get("/ws/cluster/relay/{session_id}", clusterRelay.PeerRelay)
