@@ -30,6 +30,31 @@ func (h *DesktopHandler) Capability(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(desktop.Probe(h.Port))
 }
 
+// Setup POST /api/desktop/setup {node, password}（路由层已挂 auth 中间件）
+// 本机直接执行安装；远程节点经集群路由转发到对端 internal 端点执行
+func (h *DesktopHandler) Setup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Node     string `json:"node"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "请求体错误", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if body.Node == "" || h.Cluster == nil || body.Node == h.Cluster.SelfID() {
+		json.NewEncoder(w).Encode(desktop.Setup(h.Port, body.Password))
+		return
+	}
+	var out desktop.SetupResult
+	if err := h.Cluster.CallAny(body.Node, "POST", "/api/cluster/internal/desktop/setup",
+		map[string]string{"password": body.Password}, &out); err != nil {
+		json.NewEncoder(w).Encode(desktop.SetupResult{Message: "转发到目标节点失败: " + err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
 func (h *DesktopHandler) WS(w http.ResponseWriter, r *http.Request) {
 	// 中继链路（带集群令牌）跳过 JWT；浏览器直连必须 JWT
 	if h.Cluster == nil || r.Header.Get("X-LinkHub-Token") != h.Cluster.Token() {

@@ -54,3 +54,22 @@ func portListening(port int) bool {
 	conn.Close()
 	return true
 }
+
+// ---------- 远程安装辅助（「需要我帮你安装吗？」→「需要」） ----------
+type SetupResult struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+	Output  string `json:"output,omitempty"` // 安装命令输出（密码已脱敏）
+}
+
+// Setup 在目标节点安装并启动 VNC 服务端（平台实现见 setup_*.go）
+func Setup(port int, password string) SetupResult {
+	return setupDesktop(port, password)
+}
+
+// cacheReset 安装成功后立即清缓存，让下一次探测看到新状态
+func cacheReset() {
+	cacheMu.Lock()
+	cacheAt = time.Time{}
+	cacheMu.Unlock()
+}
