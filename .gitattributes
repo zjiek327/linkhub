@@ -1,0 +1,3 @@
+# Windows 批处理必须 CRLF（cmd 解析器对 LF 支持不可靠）；脚本类强制 LF
+*.bat text eol=crlf
+*.sh  text eol=lf

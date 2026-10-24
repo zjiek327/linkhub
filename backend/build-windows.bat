@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem ============================================
 rem  灵枢 LinkHub Windows 安装包一键构建
 rem  前置：Python 3.12+ 与 Node.js 20+ 已安装且在 PATH

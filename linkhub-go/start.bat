@@ -1,4 +1,6 @@
 @echo off
+rem 控制台切 UTF-8 代码页：本文件含中文且保存为 UTF-8，GBK 代码页下会把中文解析成乱码命令
+chcp 65001 >nul
 rem 灵枢 LinkHub Go 版一键启动（Windows）：双击即可
 cd /d "%~dp0"
 

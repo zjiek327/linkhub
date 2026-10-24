@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem 灵枢 LinkHub 一键启动（Windows）
 rem 由安装包部署到安装目录，桌面快捷方式指向这里
 cd /d "%~dp0backend"
