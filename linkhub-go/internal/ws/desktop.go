@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 
 	"linkhub/internal/cluster"
 	"linkhub/internal/desktop"
+	"linkhub/internal/desktop/capture"
+	"linkhub/internal/desktop/input"
 )
 
 // DesktopHandler 节点桌面共享：/ws/desktop?node=<id>
@@ -71,8 +74,96 @@ func (h *DesktopHandler) WS(w http.ResponseWriter, r *http.Request) {
 	h.relayDesktop(w, r, node)
 }
 
-// localDesktop 本机 VNC 代理：浏览器 WS ⇄ 127.0.0.1:port
+// localDesktop 本机桌面：builtin → 进程内采集流；active → VNC 代理
 func (h *DesktopHandler) localDesktop(w http.ResponseWriter, r *http.Request) {
+	cap := desktop.Probe(h.Port)
+	if cap.Status == "builtin" {
+		h.localBuiltin(w, r)
+		return
+	}
+	if cap.Status == "headless" {
+		wsClose(w, r, 4403, "该节点无图形桌面环境")
+		return
+	}
+	h.localVNC(w, r)
+}
+
+// localBuiltin 内置采集会话：下行 JPEG 脏矩形帧（二进制），上行输入事件（JSON 文本帧）
+func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
+	scr, ok := capture.Open()
+	if !ok {
+		wsClose(w, r, 4403, "内置采集不可用")
+		return
+	}
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+	if err != nil {
+		scr.Close()
+		return
+	}
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	stream := capture.NewStream(scr, 12)
+	sz := scr.Size()
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// 下行：采集循环 → WS
+	go func() {
+		defer cancel()
+		if err := stream.Run(func(frame []byte) {
+			if werr := c.Write(ctx, websocket.MessageBinary, frame); werr != nil {
+				return
+			}
+		}); err != nil {
+			log.Printf("[desktop-builtin] 采集循环退出: %v", err)
+		}
+	}()
+	defer stream.Stop()
+
+	// 上行：输入事件 → 平台注入
+	inj, hasInput := input.Open()
+	if inj != nil {
+		defer inj.Close()
+	}
+	if !hasInput {
+		inj = nil
+	}
+	for {
+		typ, data, err := c.Read(ctx)
+		if err != nil {
+			return
+		}
+		if typ != websocket.MessageText {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"` // mouse_move | mouse_button | wheel | key
+			X, Y    int    `json:"x,y"`
+			Button  int    `json:"button"`
+			Down    bool   `json:"down"`
+			Dy      int    `json:"dy"`
+			Keysym  uint32 `json:"keysym"`
+		}
+		if json.Unmarshal(data, &ev) != nil || inj == nil {
+			continue
+		}
+		switch ev.Type {
+		case "mouse_move":
+			inj.MouseMove(ev.X, ev.Y)
+		case "mouse_button":
+			inj.MouseButton(ev.Button, ev.Down)
+		case "wheel":
+			inj.Wheel(ev.Dy)
+		case "key":
+			inj.Key(ev.Keysym, ev.Down)
+		}
+	}
+	_ = sz
+}
+
+// localVNC 本机 VNC 代理：浏览器 WS ⇄ 127.0.0.1:port
+func (h *DesktopHandler) localVNC(w http.ResponseWriter, r *http.Request) {
 	cap := desktop.Probe(h.Port)
 	if cap.Status == "headless" {
 		wsClose(w, r, 4403, "该节点无图形桌面环境")

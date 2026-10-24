@@ -8,10 +8,12 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"linkhub/internal/desktop/capture"
 )
 
 type Capability struct {
-	Status string `json:"status"` // active | available | headless
+	Status string `json:"status"` // builtin=进程内采集可用（零依赖） | active=VNC 在监听 | available=有图形会话未起 VNC | headless=无桌面
 	Port   int    `json:"port"`
 	Hint   string `json:"hint"` // available/headless 时的指引说明
 }
@@ -37,6 +39,11 @@ func Probe(port int) Capability {
 }
 
 func probe(port int) Capability {
+	// 内置采集可用（Windows GDI / X11）：零第三方依赖，优先级最高
+	if scr, ok := capture.Open(); ok {
+		scr.Close()
+		return Capability{Status: "builtin", Port: port, Hint: "内置采集（无需 VNC 服务端）"}
+	}
 	if portListening(port) {
 		return Capability{Status: "active", Port: port}
 	}

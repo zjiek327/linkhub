@@ -9,18 +9,18 @@
       <template #header>🖥 本机桌面</template>
       <div style="display:flex;align-items:center;gap:12px">
         <el-tag size="small" effect="plain"
-                :type="selfCap.status === 'active' ? 'success' : selfCap.status === 'available' ? 'warning' : 'info'">
+                :type="selfCap.status === 'builtin' || selfCap.status === 'active' ? 'success' : selfCap.status === 'available' ? 'warning' : 'info'">
           {{ capText(selfCap) }}
         </el-tag>
         <span v-if="selfCap.hint" style="color:var(--lh-muted,#888);font-size:13px">{{ selfCap.hint }}</span>
         <span style="flex:1" />
-        <el-button size="small" type="primary" :disabled="selfCap.status !== 'active'"
-                   @click="openDesktop('', '本机')">连接桌面</el-button>
+        <el-button size="small" type="primary"
+                   :disabled="selfCap.status !== 'active' && selfCap.status !== 'builtin'"
+                   @click="openDesktop('', '本机', selfCap.status)">连接桌面</el-button>
         <el-button v-if="selfCap.status === 'available'" size="small" type="warning" plain
                    @click="showCapHint('', '本机', selfCap)">帮我安装</el-button>
       </div>
     </el-card>
-
     <div class="toolbar">
       <el-button type="primary" :disabled="!info.enabled" @click="joinVisible = true">加入节点</el-button>
       <el-button @click="load">刷新</el-button>
@@ -90,8 +90,9 @@
         <el-table-column label="桌面" width="110">
           <template #default="{ row }">
             <template v-if="row.status === 'online' || row.is_self">
-              <el-button v-if="row.resources?.desktop?.status === 'active'" size="small" type="primary" plain
-                         @click="openDesktop(row.node_id, row.name)">🖥 桌面</el-button>
+              <el-button v-if="row.resources?.desktop?.status === 'builtin' || row.resources?.desktop?.status === 'active'"
+                         size="small" type="primary" plain
+                         @click="openDesktop(row.node_id, row.name, row.resources.desktop.status)">🖥 桌面</el-button>
               <el-button v-else-if="row.resources?.desktop?.status === 'available'" size="small" plain
                          @click="showCapHint(row.node_id, row.name, row.resources.desktop)">需开启</el-button>
               <el-tooltip v-else content="该节点无图形桌面环境或能力未知">
@@ -151,7 +152,7 @@
 
     <el-dialog v-model="deskVisible" :title="`🖥 桌面共享 · ${deskNodeName}`"
                width="92%" top="2vh" destroy-on-close append-to-body>
-      <DesktopPane v-if="deskVisible" :node="deskNode" :node-name="deskNodeName" />
+      <DesktopPane v-if="deskVisible" :node="deskNode" :node-name="deskNodeName" :mode="deskMode" />
     </el-dialog>
 
     <el-dialog v-model="joinVisible" title="加入节点" width="440px">
@@ -187,15 +188,18 @@ type DesktopCap = { status: 'active' | 'available' | 'headless'; port: number; h
 const deskVisible = ref(false)
 const deskNode = ref('')
 const deskNodeName = ref('')
+const deskMode = ref<'builtin' | 'vnc'>('builtin')
 const selfCap = ref<DesktopCap | null>(null)
 
 function capText(c: DesktopCap) {
-  return c.status === 'active' ? `VNC 服务运行中（:${c.port}）`
+  return c.status === 'builtin' ? '内置采集可用（免装 VNC）'
+    : c.status === 'active' ? `VNC 服务运行中（:${c.port}）`
     : c.status === 'available' ? '有图形桌面，未开启 VNC 服务' : '无图形桌面环境'
 }
-function openDesktop(nodeId: string, name: string) {
+function openDesktop(nodeId: string, name: string, capStatus?: string) {
   deskNode.value = nodeId
   deskNodeName.value = name
+  deskMode.value = capStatus === 'builtin' ? 'builtin' : 'vnc'
   deskVisible.value = true
 }
 
