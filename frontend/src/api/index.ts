@@ -128,6 +128,8 @@ export const api = {
     http.post<{ ok: boolean; message: string; output?: string }>('/desktop/setup', { node, password }).then(r => r.data),
   monitorTraffic: (node?: string, window = '30m') =>
     http.get<any>('/monitor/traffic', { params: { node: node || undefined, window } }).then(r => r.data),
+  monitorMetrics: (node?: string) =>
+    http.get<any>('/monitor/metrics', { params: { node: node || undefined } }).then(r => r.data),
   joinCluster: (address: string, token?: string) => http.post<ClusterNode>('/cluster/join', { address, token: token || undefined }).then(r => r.data),
   leaveCluster: (nodeId: string) => http.post(`/cluster/leave/${nodeId}`),
   discovered: () => http.get<DiscoveredNode[]>('/cluster/discovered').then(r => r.data),

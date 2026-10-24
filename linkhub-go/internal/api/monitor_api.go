@@ -15,19 +15,22 @@ import (
 //   GET /api/cluster/internal/monitor/traffic   集群转发落点（X-LinkHub-Token）
 func RegisterMonitorRoutes(r chi.Router, m *monitor.Service, cl *cluster.Cluster, mw interface {
 	User(next http.Handler) http.Handler
-}) {
-	h := &monitorHandler{monitor: m, cluster: cl}
+}, ms *monitor.MetricsService) {
+	h := &monitorHandler{monitor: m, metrics: ms, cluster: cl}
 	r.Route("/api/monitor", func(ar chi.Router) {
 		ar.Use(mw.User)
 		ar.Get("/traffic", h.traffic)
+		ar.Get("/metrics", h.systemMetrics)
 	})
 	if cl != nil {
 		r.Get("/api/cluster/internal/monitor/traffic", h.internalTraffic)
+		r.Get("/api/cluster/internal/monitor/metrics", h.internalMetrics)
 	}
 }
 
 type monitorHandler struct {
 	monitor *monitor.Service
+	metrics *monitor.MetricsService
 	cluster *cluster.Cluster
 }
 
@@ -77,5 +80,45 @@ func (h *monitorHandler) local(w http.ResponseWriter, window time.Duration) {
 	jsonOut(w, map[string]interface{}{
 		"snapshot": h.monitor.Snapshot(),
 		"history":  h.monitor.History(window),
+	})
+}
+
+// metrics GET /api/monitor/metrics?node= 系统指标快照+历史（无 root 要求，全平台）
+func (h *monitorHandler) systemMetrics(w http.ResponseWriter, r *http.Request) {
+	node := r.URL.Query().Get("node")
+	if node == "" || h.cluster == nil || node == h.cluster.SelfID() {
+		h.localMetrics(w)
+		return
+	}
+	peer := h.cluster.GetPeer(node)
+	if peer == nil || peer.Status != "online" {
+		jsonErr(w, 502, "节点不可达或为间接节点（监控暂只支持直连节点）")
+		return
+	}
+	var out map[string]interface{}
+	if err := h.cluster.GetJSON(peer, "/api/cluster/internal/monitor/metrics", &out); err != nil {
+		jsonErr(w, 502, "获取远程节点指标失败: "+err.Error())
+		return
+	}
+	jsonOut(w, out)
+}
+
+func (h *monitorHandler) internalMetrics(w http.ResponseWriter, r *http.Request) {
+	if h.cluster == nil || r.Header.Get("X-LinkHub-Token") != h.cluster.Token() {
+		jsonErr(w, 403, "令牌无效")
+		return
+	}
+	h.localMetrics(w)
+}
+
+func (h *monitorHandler) localMetrics(w http.ResponseWriter) {
+	if h.metrics == nil {
+		jsonErr(w, 503, "系统指标未启用")
+		return
+	}
+	// 历史点导出（CPU/内存/网卡速率曲线共用）
+	jsonOut(w, map[string]interface{}{
+		"snapshot": h.metrics.Metrics(),
+		"history":  h.metrics.MetricsHistory(time.Hour),
 	})
 }

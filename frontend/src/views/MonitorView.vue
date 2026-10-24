@@ -6,21 +6,32 @@
         <el-option v-for="n in nodes" :key="n.node_id" :value="n.node_id" :label="n.name"
                    :disabled="n.status !== 'online'" />
       </el-select>
-      <el-select v-model="interval" style="width:110px" @change="restartTimer">
+      <el-radio-group v-model="tab" size="small">
+        <el-radio-button value="system">系统指标</el-radio-button>
+        <el-radio-button value="traffic">流量监控</el-radio-button>
+      </el-radio-group>
+      <el-select v-if="tab === 'traffic'" v-model="interval" style="width:110px" @change="restartTimer">
         <el-option v-for="o in INTERVALS" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
       <el-button @click="reload">刷新</el-button>
       <el-switch v-model="live" active-text="实时" @change="restartTimer" />
       <span style="flex:1" />
       <el-tag v-if="error" type="danger" effect="plain">{{ error }}</el-tag>
-      <template v-else>
+      <template v-else-if="tab === 'traffic'">
         <el-tag effect="plain">↑ {{ fmtRate(totalRate.sent) }}/s</el-tag>
         <el-tag type="success" effect="plain">↓ {{ fmtRate(totalRate.recv) }}/s</el-tag>
         <el-tag type="info" effect="plain">会话累计 ↑{{ fmtSize(totalSent) }} ↓{{ fmtSize(totalRecv) }}</el-tag>
       </template>
+      <template v-else>
+        <el-tag effect="plain">CPU {{ (sysSnap.cpu?.percent ?? 0).toFixed(0) }}%</el-tag>
+        <el-tag type="success" effect="plain">内存 {{ (sysSnap.mem?.used_pct ?? 0).toFixed(0) }}%</el-tag>
+      </template>
     </div>
 
-    <el-card shadow="never">
+    <!-- 系统指标 Tab -->
+    <SystemMetricsPane v-if="tab === 'system'" :snap="sysSnap" :hist="sysHist" />
+
+    <el-card v-show="tab === 'traffic'" shadow="never">
       <template #header>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span>📈 流量趋势（{{ intervalLabel }}粒度，窗口 {{ windowLabel }}）</span>
@@ -44,7 +55,7 @@
       </div>
     </el-card>
 
-    <el-card shadow="never" style="margin-top:14px">
+    <el-card v-show="tab === 'traffic'" shadow="never" style="margin-top:14px">
       <template #header>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span>📡 实时速率（按进程）</span>
@@ -81,8 +92,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api'
+import SystemMetricsPane from '../components/SystemMetricsPane.vue'
 
 // 刷新粒度=曲线采样粒度；窗口=粒度×点数；窗口>1h 时后端自动切分钟桶（秒桶仅保留1h）
 const INTERVALS = [
@@ -108,6 +120,18 @@ const totalRecv = ref(0)
 const nodes = ref<any[]>([])
 const protoFilter = ref('')
 const interval = ref(10000)
+const tab = ref<'system' | 'traffic'>('system')
+
+// 系统指标
+const sysSnap = ref<any>({})
+const sysHist = ref<any[]>([])
+async function loadMetrics() {
+  try {
+    const r = await api.monitorMetrics(nodeId.value)
+    sysSnap.value = r.snapshot ?? {}
+    sysHist.value = r.history ?? []
+  } catch { /* 顶部已有错误提示路径 */ }
+}
 
 const W = 1000, H = 200
 const intervalLabel = computed(() => INTERVALS.find(i => i.value === interval.value)?.label ?? '')
@@ -216,6 +240,7 @@ async function reload() {
 }
 
 let timer: number | undefined
+let metricsTimer: number | undefined
 function restartTimer() {
   if (timer) clearInterval(timer)
   timer = undefined
@@ -223,8 +248,13 @@ function restartTimer() {
   reload()
 }
 
+watch(tab, () => {
+  if (tab.value === 'system') loadMetrics()
+})
+
 loadNodes().then(() => restartTimer())
-onUnmounted(() => { if (timer) clearInterval(timer) })
+metricsTimer = window.setInterval(() => { if (tab.value === 'system') loadMetrics() }, 5000)
+onUnmounted(() => { if (timer) clearInterval(timer); if (metricsTimer) clearInterval(metricsTimer) })
 </script>
 
 <style scoped>

@@ -129,6 +129,10 @@ func main() {
 	defer mon.Close()
 	log.Printf("流量监控: %s", map[bool]string{true: "已启用（eBPF 采集）", false: mon.Reason()}[mon.Enabled()])
 
+	// 系统指标监控（gopsutil，全平台无 root 要求）
+	metricsSvc := monitor.StartMetrics(func() int { return len(mgr.OnlineSessionIDs()) })
+	defer metricsSvc.Close()
+
 	h := api.NewHandler(st, mgr, mw, crypto, bus, cl, sched)
 	wsH := ws.NewHandler(mgr, bus)
 	// 终端协作边界：WS 查询 token 解析租户（与 auth 中间件同源逻辑）
@@ -227,7 +231,7 @@ func main() {
 
 	// 前端静态托管（embed 嵌入二进制，单文件分发）
 	// 用 NotFound 兜底而非 r.Get("/*")：chi 中 /* 端点会整个吞掉 Mount("/", api) 的子路由
-	api.RegisterMonitorRoutes(r, mon, cl, mw)
+	api.RegisterMonitorRoutes(r, mon, cl, mw, metricsSvc)
 	r.NotFound(api.FrontendHandler().ServeHTTP)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
