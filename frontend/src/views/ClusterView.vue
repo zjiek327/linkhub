@@ -16,6 +16,8 @@
         <span style="flex:1" />
         <el-button size="small" type="primary" :disabled="selfCap.status !== 'active'"
                    @click="openDesktop('', '本机')">连接桌面</el-button>
+        <el-button v-if="selfCap.status === 'available'" size="small" type="warning" plain
+                   @click="showCapHint('', '本机', selfCap)">帮我安装</el-button>
       </div>
     </el-card>
 
@@ -91,7 +93,7 @@
               <el-button v-if="row.resources?.desktop?.status === 'active'" size="small" type="primary" plain
                          @click="openDesktop(row.node_id, row.name)">🖥 桌面</el-button>
               <el-button v-else-if="row.resources?.desktop?.status === 'available'" size="small" plain
-                         @click="showCapHint(row.resources.desktop)">需开启</el-button>
+                         @click="showCapHint(row.node_id, row.name, row.resources.desktop)">需开启</el-button>
               <el-tooltip v-else content="该节点无图形桌面环境或能力未知">
                 <el-button size="small" disabled>无桌面</el-button>
               </el-tooltip>
@@ -107,6 +109,45 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="capDlg.visible" :title="`开启桌面共享 · ${capDlg.name}`" width="560px" append-to-body>
+      <template v-if="capDlg.step === 'ask'">
+        <p style="margin:0 0 10px">{{ capDlg.hint }}</p>
+        <p style="margin:0"><b>需要我帮你安装吗？</b></p>
+      </template>
+      <template v-else-if="capDlg.step === 'install'">
+        <el-form label-width="90px">
+          <el-form-item label="VNC 密码" required>
+            <el-input v-model="capDlg.password" type="password" show-password
+                      placeholder="安装启动后用它连接桌面" @keyup.enter="doSetup" />
+          </el-form-item>
+        </el-form>
+        <el-alert type="info" :closable="false">
+          仅 Ubuntu X11 会话支持自动安装（需要目标节点有免密 sudo）；其他系统会返回手动安装指引
+        </el-alert>
+      </template>
+      <template v-else>
+        <el-alert :type="capDlg.ok ? 'success' : 'error'" :closable="false" :title="capDlg.message" />
+        <pre v-if="capDlg.output" class="setup-output">{{ capDlg.output }}</pre>
+      </template>
+      <template #footer>
+        <template v-if="capDlg.step === 'ask'">
+          <el-button autofocus @click="capDlg.visible = false">不需要</el-button>
+          <el-button type="primary" @click="capDlg.step = 'install'">需要</el-button>
+        </template>
+        <template v-else-if="capDlg.step === 'install'">
+          <el-button @click="capDlg.step = 'ask'">返回</el-button>
+          <el-button type="primary" :loading="capDlg.loading" :disabled="!capDlg.password"
+                     @click="doSetup">开始安装</el-button>
+        </template>
+        <template v-else>
+          <el-button v-if="!capDlg.ok" @click="capDlg.step = 'install'">重试</el-button>
+          <el-button @click="capDlg.visible = false">关闭</el-button>
+          <el-button v-if="capDlg.ok" type="primary"
+                     @click="capDlg.visible = false; openDesktop(capDlg.node, capDlg.name)">连接桌面</el-button>
+        </template>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="deskVisible" :title="`🖥 桌面共享 · ${deskNodeName}`"
                width="92%" top="2vh" destroy-on-close append-to-body>
@@ -133,7 +174,7 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { api, type ClusterInfo, type ClusterNode, type DiscoveredNode } from '../api'
 import { useEvents } from '../api/events'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -157,8 +198,34 @@ function openDesktop(nodeId: string, name: string) {
   deskNodeName.value = name
   deskVisible.value = true
 }
-function showCapHint(c: DesktopCap) {
-  ElMessageBox.alert(c.hint || '该节点有图形桌面但未运行 VNC 服务端', '开启桌面共享', { confirmButtonText: '知道了' })
+
+// 「需开启」→ 安装辅助对话框：询问 → 输密码安装 → 结果（成功可直接连桌面）
+const capDlg = reactive({
+  visible: false, step: 'ask' as 'ask' | 'install' | 'done',
+  node: '', name: '', hint: '', password: '',
+  loading: false, ok: false, message: '', output: '',
+})
+function showCapHint(nodeId: string, name: string, c: DesktopCap) {
+  Object.assign(capDlg, {
+    visible: true, step: 'ask', node: nodeId, name,
+    hint: c.hint || '该节点有图形桌面但未运行 VNC 服务端',
+    password: '', ok: false, message: '', output: '',
+  })
+}
+async function doSetup() {
+  capDlg.loading = true
+  try {
+    const r = await api.desktopSetup(capDlg.node, capDlg.password)
+    capDlg.ok = r.ok
+    capDlg.message = r.message
+    capDlg.output = r.output ?? ''
+  } catch (e: any) {
+    capDlg.ok = false
+    capDlg.message = e.response?.data?.detail ?? '安装请求失败（节点不可达？）'
+  } finally {
+    capDlg.loading = false
+    capDlg.step = 'done'
+  }
 }
 
 const info = ref<ClusterInfo>({ enabled: false, node_id: '', name: '', address: '' })
@@ -262,3 +329,11 @@ import { onUnmounted } from 'vue'
 const timer = window.setInterval(load, 5000)
 onUnmounted(() => clearInterval(timer))
 </script>
+
+<style scoped>
+.setup-output {
+  max-height: 220px; overflow: auto; margin: 10px 0 0; padding: 8px 10px;
+  background: var(--lh-workbench-bg, #0c1116); color: var(--lh-muted, #8a94a0);
+  border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+}
+</style>
