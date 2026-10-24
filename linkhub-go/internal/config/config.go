@@ -19,6 +19,7 @@ type Config struct {
 	ClusterPeers  []string
 	ClusterEnabled bool
 	DiscoveryPort int
+	DesktopPort   int // 节点桌面共享：本机 VNC 服务端端口（RFB）
 }
 
 func envOr(key, def string) string {
@@ -32,6 +33,7 @@ func envOr(key, def string) string {
 func Load() *Config {
 	port, _ := strconv.Atoi(envOr("LINKHUB_PORT", "8000"))
 	discPort, _ := strconv.Atoi(envOr("LINKHUB_DISCOVERY_PORT", "37890"))
+	deskPort, _ := strconv.Atoi(envOr("LINKHUB_DESKTOP_PORT", "5900"))
 	dataDir := envOr("LINKHUB_DATA_DIR", "")
 	if dataDir == "" {
 		if runtime.GOOS == "windows" {
@@ -59,5 +61,6 @@ func Load() *Config {
 		ClusterPeers:  peers,
 		ClusterEnabled: envOr("LINKHUB_CLUSTER_ENABLED", "false") == "true",
 		DiscoveryPort: discPort,
+		DesktopPort:   deskPort,
 	}
 }

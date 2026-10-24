@@ -26,6 +26,7 @@ type Cluster struct {
 	selfName string
 	address  string
 	token    string
+	desktopPort int                          // 本机 VNC 端口（桌面共享能力探测用）
 	peers    map[string]*Node
 	pending  map[string]Pending                 // UDP 发现的待加入节点
 	known    map[string]KnownNode               // gossip 学到的间接节点（跨网段经 via 中转）
@@ -96,6 +97,9 @@ func (c *Cluster) removeJoinedAddr(addr string) {
 }
 
 func (c *Cluster) SelfID() string { return c.selfID }
+
+// SetDesktopPort 设置本机 VNC 端口（main 注入，能力探测/广播用）
+func (c *Cluster) SetDesktopPort(port int) { c.desktopPort = port }
 
 // ---------- 握手 ----------
 func (c *Cluster) Handshake(address, name string, remoteNodeID string) (*Node, error) {
@@ -246,11 +250,18 @@ func (c *Cluster) ping(n *Node) error {
 		return err
 	}
 	defer resp.Body.Close()
-	// 心跳顺带 gossip：对方的节点列表（含状态）刷新间接节点表
+	// 心跳顺带 gossip：对方的节点列表（含状态）刷新间接节点表；
+	// 同时存对端资源快照（串口/桌面能力），节点列表据此展示
 	var result struct {
-		Peers []models.Node `json:"peers"`
+		Peers     []models.Node          `json:"peers"`
+		Resources map[string]interface{} `json:"resources"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&result) == nil {
+		if result.Resources != nil {
+			c.mu.Lock()
+			n.Resources = result.Resources
+			c.mu.Unlock()
+		}
 		c.gossipFrom(result.Peers, n.NodeID)
 	}
 	return nil
@@ -278,6 +289,7 @@ func (c *Cluster) ListNodes() []models.Node {
 	out := []models.Node{{
 		NodeID: c.selfID, Name: c.selfName, Address: c.address,
 		Status: "online", IsSelf: true, LastSeen: time.Now(),
+		Resources: c.SelfResources(), // 本机资源实时计算（探针有缓存），保证节点列表可见桌面能力
 	}}
 	for _, p := range c.peers {
 		out = append(out, p.Node)

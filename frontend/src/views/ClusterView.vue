@@ -5,6 +5,20 @@
       <code>LINKHUB_CLUSTER_TOKEN</code> 后重启，再回到本页加入集群。
     </el-alert>
 
+    <el-card v-if="!info.enabled && selfCap" shadow="never" style="margin-bottom:14px">
+      <template #header>🖥 本机桌面</template>
+      <div style="display:flex;align-items:center;gap:12px">
+        <el-tag size="small" effect="plain"
+                :type="selfCap.status === 'active' ? 'success' : selfCap.status === 'available' ? 'warning' : 'info'">
+          {{ capText(selfCap) }}
+        </el-tag>
+        <span v-if="selfCap.hint" style="color:var(--lh-muted,#888);font-size:13px">{{ selfCap.hint }}</span>
+        <span style="flex:1" />
+        <el-button size="small" type="primary" :disabled="selfCap.status !== 'active'"
+                   @click="openDesktop('', '本机')">连接桌面</el-button>
+      </div>
+    </el-card>
+
     <div class="toolbar">
       <el-button type="primary" :disabled="!info.enabled" @click="joinVisible = true">加入节点</el-button>
       <el-button @click="load">刷新</el-button>
@@ -71,6 +85,19 @@
         <el-table-column label="最后心跳" width="170">
           <template #default="{ row }">{{ new Date(row.last_seen).toLocaleTimeString() }}</template>
         </el-table-column>
+        <el-table-column label="桌面" width="110">
+          <template #default="{ row }">
+            <template v-if="row.status === 'online' || row.is_self">
+              <el-button v-if="row.resources?.desktop?.status === 'active'" size="small" type="primary" plain
+                         @click="openDesktop(row.node_id, row.name)">🖥 桌面</el-button>
+              <el-button v-else-if="row.resources?.desktop?.status === 'available'" size="small" plain
+                         @click="showCapHint(row.resources.desktop)">需开启</el-button>
+              <el-tooltip v-else content="该节点无图形桌面环境或能力未知">
+                <el-button size="small" disabled>无桌面</el-button>
+              </el-tooltip>
+            </template>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="110">
           <template #default="{ row }">
             <el-popconfirm v-if="!row.is_self" title="将该节点移出集群？" @confirm="leave(row.node_id)">
@@ -80,6 +107,11 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="deskVisible" :title="`🖥 桌面共享 · ${deskNodeName}`"
+               width="92%" top="2vh" destroy-on-close append-to-body>
+      <DesktopPane v-if="deskVisible" :node="deskNode" :node-name="deskNodeName" />
+    </el-dialog>
 
     <el-dialog v-model="joinVisible" title="加入节点" width="440px">
       <el-form label-width="90px">
@@ -100,11 +132,34 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, defineAsyncComponent, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, type ClusterInfo, type ClusterNode, type DiscoveredNode } from '../api'
 import { useEvents } from '../api/events'
 import StatusBadge from '../components/StatusBadge.vue'
+
+// noVNC 体积大（~290KB），按需加载：打开桌面对话框时才拉取 chunk
+const DesktopPane = defineAsyncComponent(() => import('../components/DesktopPane.vue'))
+
+type DesktopCap = { status: 'active' | 'available' | 'headless'; port: number; hint?: string }
+
+const deskVisible = ref(false)
+const deskNode = ref('')
+const deskNodeName = ref('')
+const selfCap = ref<DesktopCap | null>(null)
+
+function capText(c: DesktopCap) {
+  return c.status === 'active' ? `VNC 服务运行中（:${c.port}）`
+    : c.status === 'available' ? '有图形桌面，未开启 VNC 服务' : '无图形桌面环境'
+}
+function openDesktop(nodeId: string, name: string) {
+  deskNode.value = nodeId
+  deskNodeName.value = name
+  deskVisible.value = true
+}
+function showCapHint(c: DesktopCap) {
+  ElMessageBox.alert(c.hint || '该节点有图形桌面但未运行 VNC 服务端', '开启桌面共享', { confirmButtonText: '知道了' })
+}
 
 const info = ref<ClusterInfo>({ enabled: false, node_id: '', name: '', address: '' })
 const nodes = ref<ClusterNode[]>([])
@@ -129,6 +184,9 @@ async function load() {
     if (info.value.enabled) {
       nodes.value = await api.clusterNodes()
       pending.value = await api.discovered()
+    } else {
+      // 非集群模式：本机桌面能力独立探测
+      try { selfCap.value = await api.desktopCapability() } catch { selfCap.value = null }
     }
   } finally { loading.value = false }
 }

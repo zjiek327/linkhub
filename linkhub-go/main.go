@@ -78,6 +78,7 @@ func main() {
 			adv = fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
 		}
 		cl = cluster.NewCluster(st, nodeID, cfg.NodeName, adv, cfg.ClusterToken)
+		cl.SetDesktopPort(cfg.DesktopPort)
 		// 存量设备归属迁移：本机设备必须带本节点 ID，否则前端会误判为远程副本
 		st.Exec(nil, `UPDATE devices SET node_id=? WHERE node_id='local' OR node_id=''`, nodeID)
 		// 节点状态 → 事件总线
@@ -132,6 +133,21 @@ func main() {
 		wsH.Terminal(w, r)
 	})
 	r.Get("/ws/events", wsH.Events)
+
+	// 节点桌面共享（VNC/RFB）：本机代理 + 跨节点中继，分发逻辑在 handler 内按 node 参数判断
+	deskH := &ws.DesktopHandler{
+		Port:    cfg.DesktopPort,
+		Cluster: cl,
+		Auth: func(r *http.Request) bool {
+			_, reject := mw.Authenticate(r)
+			return reject == ""
+		},
+	}
+	r.Route("/api/desktop", func(ar chi.Router) {
+		ar.Use(mw.User)
+		ar.Get("/capability", deskH.Capability)
+	})
+	r.Get("/ws/desktop", deskH.WS)
 
 	if cl != nil {
 		r.Get("/ws/cluster/relay/{session_id}", clusterRelay.PeerRelay)

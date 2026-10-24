@@ -63,7 +63,11 @@ export interface Stats {
 export interface Group { id: number; name: string; parent_id: number | null }
 export interface ClusterNode {
   node_id: string; name: string; address: string; status: string
-  is_self: boolean; last_seen: string; resources: { serial_ports?: { device: string; description: string }[] }
+  is_self: boolean; last_seen: string
+  resources: {
+    serial_ports?: { device: string; description: string }[]
+    desktop?: { status: 'active' | 'available' | 'headless'; port: number; hint?: string }
+  }
 }
 export interface ClusterInfo { enabled: boolean; node_id: string; name: string; address: string }
 export interface DiscoveredNode { node_id: string; name: string; address: string }
@@ -118,6 +122,8 @@ export const api = {
   // 集群
   clusterInfo: () => http.get<ClusterInfo>('/cluster/info').then(r => r.data),
   clusterNodes: () => http.get<ClusterNode[]>('/cluster/nodes').then(r => r.data),
+  desktopCapability: () =>
+    http.get<{ status: 'active' | 'available' | 'headless'; port: number; hint?: string }>('/desktop/capability').then(r => r.data),
   joinCluster: (address: string, token?: string) => http.post<ClusterNode>('/cluster/join', { address, token: token || undefined }).then(r => r.data),
   leaveCluster: (nodeId: string) => http.post(`/cluster/leave/${nodeId}`),
   discovered: () => http.get<DiscoveredNode[]>('/cluster/discovered').then(r => r.data),

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"linkhub/internal/connector"
+	"linkhub/internal/desktop"
 	"linkhub/internal/models"
 )
 
@@ -257,16 +258,18 @@ func (c *Cluster) ForgetNode(nodeID string) {
 	c.mu.Unlock()
 }
 
-// ---------- 本机资源（串口） ----------
-// ResourceWatchLoop 每 2s 快照本机串口，变化则更新 nodes.resources 并广播 resource_update
+// ---------- 本机资源（串口 + 桌面共享能力） ----------
+// ResourceWatchLoop 每 2s 快照本机串口与桌面能力，变化则更新 nodes.resources 并广播 resource_update
 func (c *Cluster) ResourceWatchLoop(emit func(string, map[string]interface{})) {
 	last := ""
 	for {
 		ports := connector.ListPorts()
-		b, _ := json.Marshal(ports)
+		cap := desktop.Probe(c.desktopPort)
+		pb, _ := json.Marshal(ports)
+		res := map[string]interface{}{"serial_ports": json.RawMessage(pb), "desktop": cap}
+		b, _ := json.Marshal(res)
 		if string(b) != last {
 			last = string(b)
-			res := map[string]interface{}{"serial_ports": json.RawMessage(b)}
 			n := &models.Node{
 				NodeID: c.selfID, Name: c.selfName, Address: c.address,
 				Status: "online", IsSelf: true, LastSeen: time.Now(), Resources: res,
@@ -274,7 +277,7 @@ func (c *Cluster) ResourceWatchLoop(emit func(string, map[string]interface{})) {
 			c.store.UpsertNode(n)
 			if emit != nil {
 				emit("resource_update", map[string]interface{}{
-					"node_id": c.selfID, "serial_ports": json.RawMessage(b),
+					"node_id": c.selfID, "serial_ports": json.RawMessage(pb), "desktop": cap,
 				})
 			}
 		}
@@ -286,11 +289,14 @@ func (c *Cluster) ResourceWatchLoop(emit func(string, map[string]interface{})) {
 func (c *Cluster) SelfResources() map[string]interface{} {
 	nodes, _ := c.store.ListNodes()
 	for _, n := range nodes {
-		if n.IsSelf {
+		if n.IsSelf && n.Resources != nil {
 			return n.Resources
 		}
 	}
-	return map[string]interface{}{"serial_ports": serialPortsJSON()}
+	return map[string]interface{}{
+		"serial_ports": serialPortsJSON(),
+		"desktop":      desktop.Probe(c.desktopPort),
+	}
 }
 
 func serialPortsJSON() json.RawMessage {
