@@ -126,6 +126,8 @@ export const api = {
     http.get<{ status: 'active' | 'available' | 'headless'; port: number; hint?: string }>('/desktop/capability').then(r => r.data),
   desktopSetup: (node: string, password: string) =>
     http.post<{ ok: boolean; message: string; output?: string }>('/desktop/setup', { node, password }).then(r => r.data),
+  monitorTraffic: (node?: string, window = '30m') =>
+    http.get<any>('/monitor/traffic', { params: { node: node || undefined, window } }).then(r => r.data),
   joinCluster: (address: string, token?: string) => http.post<ClusterNode>('/cluster/join', { address, token: token || undefined }).then(r => r.data),
   leaveCluster: (nodeId: string) => http.post(`/cluster/leave/${nodeId}`),
   discovered: () => http.get<DiscoveredNode[]>('/cluster/discovered').then(r => r.data),

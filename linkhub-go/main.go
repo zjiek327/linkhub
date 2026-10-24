@@ -19,6 +19,7 @@ import (
 	"linkhub/internal/config"
 	"linkhub/internal/desktop"
 	"linkhub/internal/events"
+	"linkhub/internal/monitor"
 	"linkhub/internal/session"
 	"linkhub/internal/store"
 	"linkhub/internal/ws"
@@ -123,6 +124,11 @@ func main() {
 	sched := automation.NewScheduler(st, mgr, cl, bus)
 	sched.Start()
 
+	// 流量监控（eBPF kretprobe；非 root 运行时优雅禁用，不影响其他功能）
+	mon := monitor.Start()
+	defer mon.Close()
+	log.Printf("流量监控: %s", map[bool]string{true: "已启用（eBPF 采集）", false: mon.Reason()}[mon.Enabled()])
+
 	h := api.NewHandler(st, mgr, mw, crypto, bus, cl, sched)
 	wsH := ws.NewHandler(mgr, bus)
 	// 终端协作边界：WS 查询 token 解析租户（与 auth 中间件同源逻辑）
@@ -221,6 +227,7 @@ func main() {
 
 	// 前端静态托管（embed 嵌入二进制，单文件分发）
 	// 用 NotFound 兜底而非 r.Get("/*")：chi 中 /* 端点会整个吞掉 Mount("/", api) 的子路由
+	api.RegisterMonitorRoutes(r, mon, cl, mw)
 	r.NotFound(api.FrontendHandler().ServeHTTP)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)

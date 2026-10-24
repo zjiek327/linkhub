@@ -15,6 +15,7 @@ const router = createRouter({
     { path: '/tenants', name: 'tenants', component: () => import('../views/TenantsView.vue'), meta: { title: '租户管理', roles: ['admin'] } },
     { path: '/accounts', name: 'accounts', component: () => import('../views/AccountsView.vue'), meta: { title: '帐号管理' } },
     { path: '/automation', name: 'automation', component: () => import('../views/AutomationView.vue'), meta: { title: '自动化' } },
+    { path: '/monitor', name: 'monitor', component: () => import('../views/MonitorView.vue'), meta: { title: '监控' } },
     { path: '/terminal/:sessionId', name: 'terminal', component: () => import('../views/TerminalView.vue'), meta: { title: '终端' } },
   ],
 })
