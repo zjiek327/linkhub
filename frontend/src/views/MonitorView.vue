@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="toolbar">
-      <el-select v-model="nodeId" style="width:200px" @change="reload">
+      <el-select v-model="nodeId" style="width:200px" @change="reload(); loadMetrics()">
         <el-option label="本机" value="" />
         <el-option v-for="n in nodes" :key="n.node_id" :value="n.node_id" :label="n.name"
                    :disabled="n.status !== 'online'" />
@@ -13,8 +13,11 @@
       <el-select v-if="tab === 'traffic'" v-model="interval" style="width:110px" @change="restartTimer">
         <el-option v-for="o in INTERVALS" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
+      <el-select v-if="tab === 'system'" v-model="sysInterval" style="width:110px" @change="restartMetricsTimer">
+        <el-option v-for="o in SYS_INTERVALS" :key="o.value" :value="o.value" :label="o.label" />
+      </el-select>
       <el-button @click="reload">刷新</el-button>
-      <el-switch v-model="live" active-text="实时" @change="restartTimer" />
+      <el-switch v-model="live" active-text="实时" @change="restartTimer(); restartMetricsTimer()" />
       <span style="flex:1" />
       <el-tag v-if="error" type="danger" effect="plain">{{ error }}</el-tag>
       <template v-else-if="tab === 'traffic'">
@@ -123,6 +126,17 @@ const interval = ref(10000)
 const tab = ref<'system' | 'traffic'>('system')
 
 // 系统指标
+const SYS_INTERVALS = [
+  { value: 10000, label: '10秒' },
+  { value: 20000, label: '20秒' },
+  { value: 30000, label: '30秒' },
+  { value: 60000, label: '1分钟' },
+  { value: 600000, label: '10分钟' },
+  { value: 1200000, label: '20分钟' },
+  { value: 1800000, label: '30分钟' },
+  { value: 3600000, label: '1小时' },
+]
+const sysInterval = ref(60000)
 const sysSnap = ref<any>({})
 const sysHist = ref<any[]>([])
 async function loadMetrics() {
@@ -247,13 +261,18 @@ function restartTimer() {
   if (live.value) timer = window.setInterval(reload, interval.value)
   reload()
 }
+function restartMetricsTimer() {
+  if (metricsTimer) clearInterval(metricsTimer)
+  metricsTimer = undefined
+  if (live.value) metricsTimer = window.setInterval(() => { if (tab.value === 'system') loadMetrics() }, sysInterval.value)
+}
 
 watch(tab, () => {
   if (tab.value === 'system') loadMetrics()
 })
 
 loadNodes().then(() => restartTimer())
-metricsTimer = window.setInterval(() => { if (tab.value === 'system') loadMetrics() }, 5000)
+restartMetricsTimer()
 onUnmounted(() => { if (timer) clearInterval(timer); if (metricsTimer) clearInterval(metricsTimer) })
 </script>
 
