@@ -103,8 +103,13 @@ func (c *Cluster) SetDesktopPort(port int) { c.desktopPort = port }
 
 // ---------- 握手 ----------
 func (c *Cluster) Handshake(address, name string, remoteNodeID string) (*Node, error) {
+	if remoteNodeID == c.selfID {
+		return nil, fmt.Errorf("不能将本机加入集群")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// 同地址换 ID（对端重装/换数据目录）：清掉旧身份在 peers/known/seed 的残留
+	c.dropByAddressLocked(address, remoteNodeID)
 	n := &Node{Node: models.Node{
 		NodeID: remoteNodeID, Name: name, Address: address, Status: "online", LastSeen: time.Now(),
 	}}
@@ -113,7 +118,34 @@ func (c *Cluster) Handshake(address, name string, remoteNodeID string) (*Node, e
 	return n, nil
 }
 
+// dropByAddressLocked 删除指定地址下所有非 keepID 的节点条目（需持 c.mu）
+func (c *Cluster) dropByAddressLocked(address, keepID string) {
+	for id, p := range c.peers {
+		if p.Address == address && id != keepID {
+			delete(c.peers, id)
+			c.store.DeleteNode(id)
+		}
+	}
+	for id, k := range c.known {
+		if k.Node.Address == address && id != keepID {
+			delete(c.known, id)
+		}
+	}
+	seed := c.seedNodes[:0]
+	for _, sn := range c.seedNodes {
+		if sn.Address == address && sn.NodeID != keepID {
+			c.store.DeleteNode(sn.NodeID)
+			continue
+		}
+		seed = append(seed, sn)
+	}
+	c.seedNodes = seed
+}
+
 func (c *Cluster) Join(address string) (*Node, error) {
+	if address == c.address {
+		return nil, fmt.Errorf("不能加入本机节点")
+	}
 	body, _ := json.Marshal(map[string]interface{}{
 		"node_id": c.selfID, "name": c.selfName, "address": c.address,
 	})
@@ -139,6 +171,10 @@ func (c *Cluster) Join(address string) (*Node, error) {
 		Peers   []models.Node `json:"peers"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
+	// 自加入兜底：地址写法不同（127.0.0.1 vs LAN IP）时靠握手返回的 node_id 识别
+	if result.NodeID == c.selfID {
+		return nil, fmt.Errorf("不能加入本机节点")
+	}
 	n := &Node{Node: models.Node{
 		NodeID: result.NodeID, Name: result.Name, Address: result.Address,
 		Status: "online", LastSeen: time.Now(),
@@ -173,6 +209,10 @@ func (c *Cluster) gossipFrom(peers []models.Node, via string) {
 		if p.NodeID == "" || p.Address == "" || p.NodeID == c.selfID {
 			continue
 		}
+		// 本机地址（自引用/旧身份）与"同地址但 ID 不同的直连 peer"（旧身份残留）一律不收
+		if p.Address == c.address || c.peerAddrMismatch(p.Address, p.NodeID) {
+			continue
+		}
 		if c.GetPeer(p.NodeID) != nil || c.IsDismissed(p.NodeID) {
 			continue
 		}
@@ -199,6 +239,18 @@ type KnownNode struct {
 	Node models.Node
 }
 
+// peerAddrMismatch 同地址已有直连 peer 但 node_id 不同（旧身份残留）
+func (c *Cluster) peerAddrMismatch(address, nodeID string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, p := range c.peers {
+		if p.Address == address && p.NodeID != nodeID {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveRoute 解析目标节点的下一跳：直连 peer 直接返回；间接节点返回其 via 直连 peer
 // 返回 (下一跳 peer, 目标是否间接, 是否可达)
 func (c *Cluster) ResolveRoute(nodeID string) (*Node, bool, bool) {
@@ -221,6 +273,10 @@ func (c *Cluster) ResolveRoute(nodeID string) (*Node, bool, bool) {
 func (c *Cluster) heartbeatLoop(n *Node) {
 	for {
 		time.Sleep(5 * time.Second)
+		// 该 peer 已被替换/移除（身份变更等）→ 旧心跳循环退出
+		if c.GetPeer(n.NodeID) != n {
+			return
+		}
 		if err := c.ping(n); err != nil {
 			c.setStatus(n, "offline")
 			// 经该节点中转的间接节点一并标记离线
@@ -253,10 +309,26 @@ func (c *Cluster) ping(n *Node) error {
 	// 心跳顺带 gossip：对方的节点列表（含状态）刷新间接节点表；
 	// 同时存对端资源快照（串口/桌面能力），节点列表据此展示
 	var result struct {
+		NodeID    string                 `json:"node_id"`
 		Peers     []models.Node          `json:"peers"`
 		Resources map[string]interface{} `json:"resources"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&result) == nil {
+		// 身份校验：同地址应答的 node_id 变了 = 对端重装/换数据目录，
+		// 旧 ID 是残留身份——清掉并按新 ID 重新登记（旧心跳循环随之退出）
+		if result.NodeID != "" && result.NodeID != n.NodeID {
+			log.Printf("节点 %s 身份变更: %s → %s，清理旧条目", n.Address, n.NodeID, result.NodeID)
+			oldID := n.NodeID
+			c.mu.Lock()
+			delete(c.peers, oldID)
+			c.mu.Unlock()
+			c.store.DeleteNode(oldID)
+			if nn, err := c.Handshake(n.Address, n.Name, result.NodeID); err == nil {
+				go c.heartbeatLoop(nn)
+				go c.syncDirectoryOnce()
+			}
+			return fmt.Errorf("peer identity changed: %s → %s", oldID, result.NodeID)
+		}
 		if result.Resources != nil {
 			c.mu.Lock()
 			n.Resources = result.Resources
@@ -283,6 +355,7 @@ func (c *Cluster) setStatus(n *Node, status string) {
 func (c *Cluster) OnEvent(f func(string, map[string]interface{})) { c.onEvent = f }
 
 // ---------- 节点列表 ----------
+// 按地址去重（self > 直连 peer > gossip > seed）：同地址多身份（重装换 ID）只保留最权威一条
 func (c *Cluster) ListNodes() []models.Node {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -291,23 +364,27 @@ func (c *Cluster) ListNodes() []models.Node {
 		Status: "online", IsSelf: true, LastSeen: time.Now(),
 		Resources: c.SelfResources(), // 本机资源实时计算（探针有缓存），保证节点列表可见桌面能力
 	}}
+	seen := map[string]bool{c.address: true, "": true}
 	for _, p := range c.peers {
+		if p.NodeID == c.selfID || seen[p.Address] { // 自引用残留与地址重复都剔除
+			continue
+		}
+		seen[p.Address] = true
 		out = append(out, p.Node)
 	}
 	for _, k := range c.known {
+		if seen[k.Node.Address] {
+			continue
+		}
+		seen[k.Node.Address] = true
 		out = append(out, k.Node) // 间接节点（带 via）
 	}
 	for _, sn := range c.seedNodes { // 上次运行的节点：重连成功前以离线态显示
-		dup := false
-		for _, o := range out {
-			if o.NodeID == sn.NodeID {
-				dup = true
-				break
-			}
+		if sn.NodeID == c.selfID || seen[sn.Address] {
+			continue
 		}
-		if !dup {
-			out = append(out, sn)
-		}
+		seen[sn.Address] = true
+		out = append(out, sn)
 	}
 	return out
 }
@@ -366,7 +443,11 @@ func (c *Cluster) DirectPeersLoop(peers []string) {
 				addrs = append(addrs, a)
 			}
 		}
+		// 本机地址跳过（历史版本可能把自己写进了 joined_addrs）
 		for _, addr := range addrs {
+			if addr == c.address {
+				continue
+			}
 			if c.GetPeerByAddress(addr) != nil {
 				continue
 			}
