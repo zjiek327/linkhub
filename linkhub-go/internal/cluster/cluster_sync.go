@@ -15,15 +15,19 @@ import (
 )
 
 // ---------- 待加入节点（UDP 广播发现） ----------
+// 10 分钟未刷新自动过期：卡片来自已下线节点时不会永远挂在发现列表
+const pendingTTL = 10 * time.Minute
+
 type Pending struct {
 	NodeID  string `json:"node_id"`
 	Name    string `json:"name"`
 	Address string `json:"address"`
+	Seen    time.Time `json:"-"`
 }
 
 func (c *Cluster) AddPending(nodeID, name, address string) {
 	c.mu.Lock()
-	c.pending[nodeID] = Pending{nodeID, name, address}
+	c.pending[nodeID] = Pending{nodeID, name, address, time.Now()}
 	c.mu.Unlock()
 }
 
@@ -32,6 +36,9 @@ func (c *Cluster) ListPending() []Pending {
 	defer c.mu.RUnlock()
 	out := []Pending{}
 	for _, p := range c.pending {
+		if time.Since(p.Seen) > pendingTTL { // 过期条目惰性清理
+			continue
+		}
 		out = append(out, p)
 	}
 	return out

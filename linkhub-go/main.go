@@ -220,7 +220,7 @@ func main() {
 					}
 				}
 				return api.DefaultBeaconBroadcasts()
-			})
+			}, cfg.ClusterSeeds)
 		}
 		go cl.DirectorySyncLoop()
 		go cl.ResourceWatchLoop(func(event string, data map[string]interface{}) { bus.Publish(event, data) })

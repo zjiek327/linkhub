@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -461,15 +462,26 @@ func (c *Cluster) DirectPeersLoop(peers []string) {
 // ---------- UDP 广播发现 ----------
 // BeaconLoop 每 3s 向 broadcasts() 返回的广播地址发节点卡片，并监听对端卡片。
 // broadcasts 动态读取（设置页保存网卡后下一轮生效）
-func (c *Cluster) BeaconLoop(port int, broadcasts func() []string) {
+// seeds 静态种子节点：跨网段广播不可达时按 UDP 单播发卡片，收到卡片的对端会单播回包，实现双向发现
+func (c *Cluster) BeaconLoop(port int, broadcasts func() []string, seeds []string) {
 	card, _ := json.Marshal(map[string]string{
 		"v": "1", "node_id": c.selfID, "name": c.selfName, "address": c.address,
+		"dport": strconv.Itoa(port), // 对端回包用：发送源端口是临时端口，无法作为回包目标
 	})
-	// 发送
+	// 发送：广播 + 种子单播
 	go func() {
 		for {
 			for _, brd := range broadcasts() {
 				c.beaconSendCard(port, brd, card)
+			}
+			for _, seed := range seeds {
+				host, sport, err := net.SplitHostPort(seed)
+				if err != nil {
+					host, sport = seed, strconv.Itoa(port)
+				}
+				if p, err := strconv.Atoi(sport); err == nil {
+					c.beaconSendCard(p, host, card)
+				}
 			}
 			time.Sleep(3 * time.Second)
 		}
@@ -482,7 +494,7 @@ func (c *Cluster) BeaconLoop(port int, broadcasts func() []string) {
 	}
 	buf := make([]byte, 1024)
 	for {
-		n, _, err := conn.ReadFromUDP(buf)
+		n, src, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			return
 		}
@@ -490,6 +502,7 @@ func (c *Cluster) BeaconLoop(port int, broadcasts func() []string) {
 			NodeID  string `json:"node_id"`
 			Name    string `json:"name"`
 			Address string `json:"address"`
+			Dport   string `json:"dport"`
 		}
 		if json.Unmarshal(buf[:n], &card) != nil || card.NodeID == c.selfID {
 			continue
@@ -502,6 +515,15 @@ func (c *Cluster) BeaconLoop(port int, broadcasts func() []string) {
 					"node_id": card.NodeID, "name": card.Name, "address": card.Address,
 				})
 			}
+			// 单播回包：跨网段时广播不可达，让对端也能发现我（回包走单播，无广播风暴）
+			reply, _ := json.Marshal(map[string]string{
+				"v": "1", "node_id": c.selfID, "name": c.selfName, "address": c.address,
+			})
+			dport, err := strconv.Atoi(card.Dport)
+			if err != nil || dport <= 0 {
+				dport = port
+			}
+			go c.beaconSendCard(dport, src.IP.String(), reply)
 		}
 	}
 }

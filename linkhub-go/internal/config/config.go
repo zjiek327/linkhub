@@ -17,6 +17,8 @@ type Config struct {
 	NodeName      string
 	AdvertiseAddr string
 	ClusterPeers  []string
+	// ClusterSeeds 静态种子节点（跨网段发现用，UDP 单播，IP/host 可带 :port）
+	ClusterSeeds  []string
 	ClusterEnabled bool
 	DiscoveryPort int
 	DesktopPort   int // 节点桌面共享：本机 VNC 服务端端口（RFB）
@@ -51,6 +53,14 @@ func Load() *Config {
 			}
 		}
 	}
+	seeds := []string{}
+	if v := os.Getenv("LINKHUB_CLUSTER_SEEDS"); v != "" {
+		for _, s := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
+			if s = strings.TrimSpace(s); s != "" {
+				seeds = append(seeds, s)
+			}
+		}
+	}
 	return &Config{
 		Port:          port,
 		DataDir:       dataDir,
@@ -59,6 +69,7 @@ func Load() *Config {
 		NodeName:      envOr("LINKHUB_NODE_NAME", ""),
 		AdvertiseAddr: envOr("LINKHUB_ADVERTISE_ADDR", ""),
 		ClusterPeers:  peers,
+		ClusterSeeds:  seeds,
 		ClusterEnabled: envOr("LINKHUB_CLUSTER_ENABLED", "false") == "true",
 		DiscoveryPort: discPort,
 		DesktopPort:   deskPort,
