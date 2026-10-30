@@ -85,11 +85,11 @@ function startBuiltin() {
   }
 }
 
-// 帧格式：[1][2B w][2B h][2B n] + 每块 [2B x][2B y][2B bw][2B bh][4B len][jpeg]
+// 帧格式：[1][2B w][2B h][2B n] + 每块 [2B x][2B y][2B bw][2B bh][4B len][jpeg]（小端，与后端 put16/put32 一致）
 async function handleFrame(f: Uint8Array) {
   if (f[0] !== 1 || !ctx2d || !canvasEl.value) return
   const dv = new DataView(f.buffer, f.byteOffset, f.byteLength)
-  const w = dv.getUint16(1), h = dv.getUint16(3), n = dv.getUint16(5)
+  const w = dv.getUint16(1, true), h = dv.getUint16(3, true), n = dv.getUint16(5, true)
   if (w !== screenW || h !== screenH) {
     screenW = w; screenH = h
     canvasEl.value.width = w; canvasEl.value.height = h
@@ -99,9 +99,9 @@ async function handleFrame(f: Uint8Array) {
   }
   let off = 7
   for (let i = 0; i < n; i++) {
-    const x = dv.getUint16(off), y = dv.getUint16(off + 2)
-    const bw = dv.getUint16(off + 4), bh = dv.getUint16(off + 6)
-    const len = dv.getUint32(off + 8)
+    const x = dv.getUint16(off, true), y = dv.getUint16(off + 2, true)
+    const bw = dv.getUint16(off + 4, true), bh = dv.getUint16(off + 6, true)
+    const len = dv.getUint32(off + 8, true)
     off += 12
     try {
       const bm = await createImageBitmap(new Blob([f.slice(off, off + len)], { type: 'image/jpeg' }))
