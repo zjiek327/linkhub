@@ -52,6 +52,7 @@ func (h *RelayHandler) RelayTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer browser.Close(websocket.StatusNormalClosure, "")
+	browser.SetReadLimit(8 << 20) // 粘贴突发/SFTP 数据块可能较大，防默认 32KB 断流
 
 	// 连下一跳的 /ws/terminal（dispatcher 按同样的 node=selfID 规则落地或继续转发）：
 	// node 参数原样保留，X-Relay-Hops 计数
@@ -67,6 +68,7 @@ func (h *RelayHandler) RelayTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer peerWS.Close(websocket.StatusNormalClosure, "")
+	peerWS.SetReadLimit(8 << 20)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

@@ -238,6 +238,8 @@ func (h *DesktopHandler) relayDesktop(w http.ResponseWriter, r *http.Request, no
 		return
 	}
 	defer browser.Close(websocket.StatusNormalClosure, "")
+	// 浏览器上行只有输入事件 JSON（<1KB），1MB 上限防滥用
+	browser.SetReadLimit(1 << 20)
 
 	relayURL := fmt.Sprintf("ws://%s/ws/desktop?%s",
 		peer.Address[len("http://"):], r.URL.RawQuery)
@@ -251,6 +253,9 @@ func (h *DesktopHandler) relayDesktop(w http.ResponseWriter, r *http.Request, no
 		return
 	}
 	defer peerWS.Close(websocket.StatusNormalClosure, "")
+	// 下行是脏矩形 JPEG 帧：全屏首帧可达数 MB——coder/websocket 默认读上限 32KB，
+	// 超限直接 "read limited" 断流（中继黑屏秒断的元凶）
+	peerWS.SetReadLimit(64 << 20)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
