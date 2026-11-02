@@ -142,8 +142,9 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var ev struct {
-			Type    string `json:"type"` // mouse_move | mouse_button | wheel | key
-			X, Y    int    `json:"x,y"`
+			Type   string `json:"type"` // mouse_move | mouse_button | wheel | key
+			X      int    `json:"x"`
+			Y      int    `json:"y"`
 			Button  int    `json:"button"`
 			Down    bool   `json:"down"`
 			Dy      int    `json:"dy"`
