@@ -82,6 +82,9 @@ func (c *Cluster) addJoinedAddr(addr string) {
 	c.store.SetMeta(joinedAddrsKey, string(b))
 }
 
+// AddJoinedAddr 供 internalHandshake 调用：被加入方持久化对方地址，重启后自动重连
+func (c *Cluster) AddJoinedAddr(addr string) { c.addJoinedAddr(addr) }
+
 func (c *Cluster) removeJoinedAddr(addr string) {
 	list := c.joinedAddrList()
 	out := list[:0]

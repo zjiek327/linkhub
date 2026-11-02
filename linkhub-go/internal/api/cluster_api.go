@@ -354,6 +354,10 @@ func (h *ClusterHandler) internalHandshake(w http.ResponseWriter, r *http.Reques
 		Address string `json:"address"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
+	if body.Address != "" {
+		// 被加入方也记下对方地址：任何一方重启后都能主动重连回去（自愈双向连接）
+		h.cluster.AddJoinedAddr(body.Address)
+	}
 	h.cluster.Handshake(body.Address, body.Name, body.NodeID)
 	jsonOut(w, map[string]interface{}{
 		"node_id": h.cluster.SelfID(), "name": h.cluster.SelfName(),
