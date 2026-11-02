@@ -58,9 +58,22 @@ type msgT struct {
 }
 
 var (
-	errMagClosed = errors.New("magnification capture closed")
+	errMagClosed  = errors.New("magnification capture closed")
 	errMagTimeout = errors.New("magnification render timeout")
 )
+
+// magTry 包装 Magnification.dll 调用：该 DLL 在精简版/N 版/服务器核心的
+// Windows 上可能缺失，LazyProc.Call 直接 panic——采集是尽力而为的能力，
+// 任何失败都必须回退 GDI，绝不能让服务进程崩掉
+func magTry(p *windows.LazyProc, args ...uintptr) (r uintptr, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			r, err = 0, fmt.Errorf("%s panic: %v", p.Name, e)
+		}
+	}()
+	r, _, err = p.Call(args...)
+	return
+}
 
 // magScreen Magnification 采集实现（Screen 接口）
 type magScreen struct {
@@ -76,7 +89,7 @@ type magScreen struct {
 
 // OpenMag 初始化 Magnification 采集；失败返回 false（调用方回退 GDI）
 func OpenMag() (Screen, bool) {
-	if r, _, _ := pMagInitialize.Call(); r == 0 {
+	if r, err := magTry(pMagInitialize); err != nil || r == 0 {
 		return nil, false
 	}
 	w, h := sm(0), sm(1)
@@ -94,10 +107,23 @@ func OpenMag() (Screen, bool) {
 }
 
 // windowThread host/mag 窗口创建 + 渲染服务循环（必须在同一 goroutine：
-// Win32 窗口消息只投递到创建线程的队列，跨线程 PeekMessage 拿不到）
+// Win32 窗口消息只投递到创建线程的队列，跨线程 PeekMessage 拿不到）。
+// 全程 recover：Mag 各 API 在任何一步失败/panic 都走 GDI 回退，不崩进程。
 func (m *magScreen) windowThread(w, h int, initErr chan error) {
+	initDone := false
+	report := func(err error) {
+		if !initDone {
+			initDone = true
+			initErr <- err
+		}
+	}
+	defer func() {
+		if e := recover(); e != nil {
+			report(fmt.Errorf("magnification window thread panic: %v", e))
+		}
+	}()
 	fail := func(what string) {
-		initErr <- magErr(what)
+		report(magErr(what))
 	}
 
 	// host：全透明 layered + 透明命中 + 工具窗——DWM 需要"可见"才渲染 mag 子窗，
@@ -153,6 +179,7 @@ func (m *magScreen) windowThread(w, h int, initErr chan error) {
 
 	initErr <- nil
 	close(initErr)
+	initDone = true
 
 	// 渲染服务循环：Frame 发来请求 → 渲染 → 回执
 	for {
@@ -170,7 +197,12 @@ func (m *magScreen) windowThread(w, h int, initErr chan error) {
 
 // renderFrame 在窗口线程执行：触发 mag 重绘、泵消息（Mag 库的渲染
 // 发生在 DispatchMessage 里 host 的 paint 处理中）、BitBlt mag 子窗到中转 DIB
-func (m *magScreen) renderFrame(w, h int) error {
+func (m *magScreen) renderFrame(w, h int) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("magnification render panic: %v", e)
+		}
+	}()
 	pInvalidateRect.Call(m.magHwnd, 0, 1)
 	for {
 		var gm msgT

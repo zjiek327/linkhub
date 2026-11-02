@@ -32,7 +32,11 @@ var (
 // Per-Monitor V2 DPI 感知：此后 GetSystemMetrics/GetDC 一律返回物理像素。
 // 不设的话高 DPI（125%/150% 缩放）下拿到的是虚拟化缩小分辨率，
 // Mag 采集源按物理坐标只抓左上角一块，GDI 抓帧也整体降分辨率。
-func init() { pSetDpiAware.Call(uintptr(0xfffffffffffffffc) /*PER_MONITOR_AWARE_V2*/) }
+// recover：该 API 仅 Win10 1607+，老系统缺导出时 panic 不能拖垮进程。
+func init() {
+	defer func() { _ = recover() }()
+	pSetDpiAware.Call(uintptr(0xfffffffffffffffc) /*PER_MONITOR_AWARE_V2*/)
+}
 
 type gdiScreen struct {
 	dc, memDC, dib uintptr
