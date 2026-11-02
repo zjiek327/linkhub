@@ -127,12 +127,34 @@ func (s *gdiScreen) Frame(buf []byte) ([]byte, error) {
 // 否则后续会话的 BitBlt 打到已释放句柄上；进程退出时由 OS 回收 GDI 对象
 func (s *gdiScreen) Close() {}
 
+// open 进程级单例：Mag 窗口/MagSetWindowSource 是进程内全局状态，
+// 多实例互相抢占导致新会话采帧失败（relay 会话秒断、本地会话正常的元凶）；
+// GDI 的 DC/DIB 同为进程级单例。所有会话共享同一 Screen，Frame 已互斥+拷贝。
+var (
+	singletonMu     sync.Mutex
+	singleton       Screen
+	singletonFailed bool
+)
+
 func open() (Screen, bool) {
-	// 优先 Magnification：能抓 GPU 合成内容（Chrome 硬件加速窗口等）；
-	// 不可用（老系统/远程会话）回退 GDI BitBlt
-	if scr, ok := OpenMag(); ok {
-		return scr, true
+	singletonMu.Lock()
+	defer singletonMu.Unlock()
+	if singletonFailed {
+		return nil, false
 	}
-	scr, ok := OpenGDI()
-	return scr, ok
+	if singleton != nil {
+		return singleton, true
+	}
+	// 优先 Magnification：能抓 GPU 合成内容（Chrome 硬件加速窗口等）；
+	// 不可用（老系统/精简版/远程会话）回退 GDI BitBlt
+	scr, ok := OpenMag()
+	if !ok {
+		scr, ok = OpenGDI()
+	}
+	if !ok {
+		singletonFailed = true
+		return nil, false
+	}
+	singleton = scr
+	return scr, true
 }

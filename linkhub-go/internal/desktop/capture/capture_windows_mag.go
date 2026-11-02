@@ -254,10 +254,10 @@ func (m *magScreen) Frame(buf []byte) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// Close 空操作：mag 窗口与 DIB 为进程级单例，随进程存亡（OS 回收）
-func (m *magScreen) Close() {
-	m.closed.Do(func() { close(m.done) })
-}
+// Close 空操作：magScreen 为进程级单例（与 gdiScreen 同理），
+// 会话结束不能销毁共享资源；窗口线程随进程存亡（OS 回收），
+// done 永不关闭——探测路径 probe() 会调用 Close，关掉会让所有会话采帧失败
+func (m *magScreen) Close() {}
 
 func magErr(what string) error {
 	if e := windows.GetLastError(); e != nil {
