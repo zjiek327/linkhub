@@ -77,6 +77,10 @@ func (h *DesktopHandler) WS(w http.ResponseWriter, r *http.Request) {
 // localDesktop 本机桌面：builtin → 进程内采集流；active → VNC 代理
 func (h *DesktopHandler) localDesktop(w http.ResponseWriter, r *http.Request) {
 	cap := desktop.Probe(h.Port)
+	if cap.Status == "disabled" {
+		wsClose(w, r, 4403, "该节点已禁用桌面共享")
+		return
+	}
 	if cap.Status == "builtin" {
 		h.localBuiltin(w, r)
 		return
@@ -165,6 +169,10 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 // localVNC 本机 VNC 代理：浏览器 WS ⇄ 127.0.0.1:port
 func (h *DesktopHandler) localVNC(w http.ResponseWriter, r *http.Request) {
 	cap := desktop.Probe(h.Port)
+	if cap.Status == "disabled" {
+		wsClose(w, r, 4403, "该节点已禁用桌面共享")
+		return
+	}
 	if cap.Status == "headless" {
 		wsClose(w, r, 4403, "该节点无图形桌面环境")
 		return

@@ -6,6 +6,7 @@ package desktop
 import (
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -39,6 +40,10 @@ func Probe(port int) Capability {
 }
 
 func probe(port int) Capability {
+	// LINKHUB_DESKTOP_ENABLED=false：节点禁用桌面共享（UI 不显示入口，会话拒绝）
+	if os.Getenv("LINKHUB_DESKTOP_ENABLED") == "false" {
+		return Capability{Status: "disabled", Port: port, Hint: "该节点已禁用桌面共享（LINKHUB_DESKTOP_ENABLED=false）"}
+	}
 	// 内置采集可用（Windows GDI / X11）：零第三方依赖，优先级最高
 	if scr, ok := capture.Open(); ok {
 		scr.Close()
