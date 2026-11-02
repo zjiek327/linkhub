@@ -26,7 +26,13 @@ var (
 	pCreateDIBSection = gdi32.NewProc("CreateDIBSection")
 	pGetCursorInfo    = user32.NewProc("GetCursorInfo")
 	pDrawIconEx       = user32.NewProc("DrawIconEx")
+	pSetDpiAware      = user32.NewProc("SetProcessDpiAwarenessContext")
 )
+
+// Per-Monitor V2 DPI 感知：此后 GetSystemMetrics/GetDC 一律返回物理像素。
+// 不设的话高 DPI（125%/150% 缩放）下拿到的是虚拟化缩小分辨率，
+// Mag 采集源按物理坐标只抓左上角一块，GDI 抓帧也整体降分辨率。
+func init() { pSetDpiAware.Call(uintptr(0xfffffffffffffffc) /*PER_MONITOR_AWARE_V2*/) }
 
 type gdiScreen struct {
 	dc, memDC, dib uintptr
@@ -117,4 +123,12 @@ func (s *gdiScreen) Frame(buf []byte) ([]byte, error) {
 // 否则后续会话的 BitBlt 打到已释放句柄上；进程退出时由 OS 回收 GDI 对象
 func (s *gdiScreen) Close() {}
 
-func open() (Screen, bool) { scr, ok := OpenGDI(); return scr, ok }
+func open() (Screen, bool) {
+	// 优先 Magnification：能抓 GPU 合成内容（Chrome 硬件加速窗口等）；
+	// 不可用（老系统/远程会话）回退 GDI BitBlt
+	if scr, ok := OpenMag(); ok {
+		return scr, true
+	}
+	scr, ok := OpenGDI()
+	return scr, ok
+}
