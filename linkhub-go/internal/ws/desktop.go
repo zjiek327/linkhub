@@ -157,10 +157,12 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		case "mouse_move":
 			inj.MouseMove(ev.X, ev.Y)
 		case "mouse_button":
+			log.Printf("[desktop] input button=%d down=%v", ev.Button, ev.Down)
 			inj.MouseButton(ev.Button, ev.Down)
 		case "wheel":
 			inj.Wheel(ev.Dy)
 		case "key":
+			log.Printf("[desktop] input keysym=0x%x down=%v", ev.Keysym, ev.Down)
 			inj.Key(ev.Keysym, ev.Down)
 		}
 	}
