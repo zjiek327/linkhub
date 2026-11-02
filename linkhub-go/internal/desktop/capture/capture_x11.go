@@ -20,13 +20,13 @@ import (
 )
 
 type x11Screen struct {
-	conn *xgb.Conn
-	root xproto.Window
+	conn  *xgb.Conn
+	root  xproto.Window
 	depth uint8
-	pm   xproto.Pixmap   // 中转 pixmap
-	gc   xproto.Gcontext
-	w, h uint16
-	buf  []byte
+	pm    xproto.Pixmap   // 中转 pixmap
+	gc    xproto.Gcontext
+	w, h  uint16
+	mu    sync.Mutex // grab 串行化：单例连接/framebuffer 被多 Stream 会话共享
 }
 
 var (
@@ -57,8 +57,10 @@ func OpenX11() (Screen, bool) {
 
 func openX11Once() (*x11Screen, bool) {
 	// Wayland 会话守卫：Xwayland 的 root 无真实桌面像素（合成器独占屏幕），
-	// 采集到的只是 X 应用区域甚至空 root——降级为 available 走 VNC 路径
-	if ms, _ := filepath.Glob("/run/user/" + strconv.Itoa(os.Getuid()) + "/wayland-*"); len(ms) > 0 {
+	// 采集到的只是 X 应用区域甚至空 root——降级为 available 走 VNC 路径。
+	// 注意检查所有用户目录：root 运行的 linkhub 只看自己 /run/user/0 会让守卫失效，
+	// 在 Wayland 桌面 sudo 运行时会误开 builtin 采到全黑
+	if ms, _ := filepath.Glob("/run/user/*/wayland-*"); len(ms) > 0 {
 		return nil, false
 	}
 	for _, auth := range authCandidates() {
@@ -110,9 +112,8 @@ func tryDisplays() (*x11Screen, bool) {
 		s := &x11Screen{conn: c, root: r.Root, depth: r.RootDepth,
 			gc: xproto.Gcontext(gcid), pm: xproto.Pixmap(pm),
 			w: r.WidthInPixels, h: r.HeightInPixels}
-		s.buf = make([]byte, int(s.w)*int(s.h)*4)
 		// 首帧验证：确认能真取到像素（普通 X 与 Xwayland 均经 pixmap 中转）
-		if _, err := s.grab(); err != nil {
+		if _, err := s.grab(make([]byte, int(s.w)*int(s.h)*4)); err != nil {
 			s.Close()
 			continue
 		}
@@ -160,8 +161,12 @@ func authCandidates() []string {
 func (s *x11Screen) Size() image.Point { return image.Pt(int(s.w), int(s.h)) }
 
 // grab 全屏取像：root --CopyArea--> pixmap --GetImage(ZPixmap)--> 像素。
-// Stream 串行调用（ticker 驱动）+ 会话互斥，无需再加锁。
-func (s *x11Screen) grab() ([]byte, error) {
+// xgb 连接与内部 pixmap 为进程级单例，多个 Stream 会话并发调用会互踩
+// buffer、Reply 串包把连接搞挂（实测两路 builtin 会话后第三路永远收不到帧），
+// 故 grab 整体互斥，像素拷入调用方 buffer（每个 Stream 持有独立 buf）。
+func (s *x11Screen) grab(dst []byte) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := xproto.CopyAreaChecked(s.conn, xproto.Drawable(s.root), xproto.Drawable(s.pm), s.gc,
 		0, 0, 0, 0, s.w, s.h).Check(); err != nil {
 		return nil, err
@@ -176,11 +181,11 @@ func (s *x11Screen) grab() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := copy(s.buf, rep.Data)
-	return s.buf[:n], nil
+	n := copy(dst, rep.Data)
+	return dst[:n], nil
 }
 
-func (s *x11Screen) Frame(_ []byte) ([]byte, error) { return s.grab() }
+func (s *x11Screen) Frame(buf []byte) ([]byte, error) { return s.grab(buf) }
 
 // Close 空操作：单例连接随进程存亡（Probe 验证/会话结束都不能真关，否则后续复用全断）
 func (s *x11Screen) Close() {}

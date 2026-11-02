@@ -5,6 +5,7 @@ package capture
 
 import (
 	"image"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -30,6 +31,7 @@ type gdiScreen struct {
 	oldObj        uintptr
 	ptr           *byte
 	w, h          int
+	mu            sync.Mutex // Frame 串行化：DIB 为进程级单例共享
 }
 
 type bitmapInfoHeader struct {
@@ -77,21 +79,22 @@ func OpenGDI() (Screen, bool) {
 
 func (s *gdiScreen) Size() image.Point { return image.Pt(s.w, s.h) }
 
-func (s *gdiScreen) Frame(_ []byte) ([]byte, error) {
+func (s *gdiScreen) Frame(buf []byte) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// SRCCOPY|CAPTUREBLT：含分层窗口
 	_, _, err := pBitBlt.Call(s.memDC, 0, 0, uintptr(s.w), uintptr(s.h), s.dc, 0, 0,
 		uintptr(0x00CC0020|0x40000000))
 	if err != nil && err.(windows.Errno) != 0 {
 		return nil, err
 	}
-	return unsafe.Slice(s.ptr, s.w*s.h*4), nil
+	// DIB 为单例共享缓冲，拷入调用方 buffer（每个 Stream 独立），多会话并发安全
+	n := copy(buf, unsafe.Slice(s.ptr, s.w*s.h*4))
+	return buf[:n], nil
 }
 
-func (s *gdiScreen) Close() {
-	pSelectObject.Call(s.memDC, s.oldObj)
-	pDeleteObject.Call(s.dib)
-	pDeleteDC.Call(s.memDC)
-	pReleaseDC.Call(0, s.dc)
-}
+// Close 空操作：DC/DIB 为进程级单例（x11 同款语义），会话结束不能真释放，
+// 否则后续会话的 BitBlt 打到已释放句柄上；进程退出时由 OS 回收 GDI 对象
+func (s *gdiScreen) Close() {}
 
 func open() (Screen, bool) { scr, ok := OpenGDI(); return scr, ok }
