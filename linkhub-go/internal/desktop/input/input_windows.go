@@ -10,9 +10,12 @@ import (
 )
 
 var (
-	user32          = windows.NewLazySystemDLL("user32.dll")
-	pSendInput      = user32.NewProc("SendInput")
+	user32            = windows.NewLazySystemDLL("user32.dll")
+	pSendInput        = user32.NewProc("SendInput")
+	pSetCursorPos     = user32.NewProc("SetCursorPos")
 	pGetSystemMetrics = user32.NewProc("GetSystemMetrics")
+	pGetCursorInfo    = user32.NewProc("GetCursorInfo")
+	pDrawIconEx       = user32.NewProc("DrawIconEx")
 )
 
 const (
@@ -83,14 +86,9 @@ func (winInput) sendKey(vk uint16, down bool) error {
 }
 
 func (w winInput) MouseMove(x, y int) error {
-	// 绝对坐标归一化到 0..65535 虚拟桌面
-	vw, vh := sm(78), sm(79) // SM_CXVIRTUALSCREEN 用 76/77 宽高即可，这里用主屏
-	if vw <= 0 || vh <= 0 {
-		vw, vh = sm(0), sm(1)
-	}
-	dx := int32((x * 65535) / max(vw, 1))
-	dy := int32((y * 65535) / max(vh, 1))
-	return w.sendMouse(mouseEventfMove|mouseEventfAbsolute, dx, dy, 0)
+	// SetCursorPos：直接像素坐标，无 SendInput 绝对坐标的归一化歧义
+	pSetCursorPos.Call(uintptr(x), uintptr(y))
+	return nil
 }
 
 func (w winInput) MouseButton(button int, down bool) error {

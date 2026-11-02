@@ -24,6 +24,8 @@ var (
 	pDeleteObject     = gdi32.NewProc("DeleteObject")
 	pBitBlt           = gdi32.NewProc("BitBlt")
 	pCreateDIBSection = gdi32.NewProc("CreateDIBSection")
+	pGetCursorInfo    = user32.NewProc("GetCursorInfo")
+	pDrawIconEx       = user32.NewProc("DrawIconEx")
 )
 
 type gdiScreen struct {
@@ -33,6 +35,17 @@ type gdiScreen struct {
 	w, h          int
 	mu            sync.Mutex // Frame 串行化：DIB 为进程级单例共享
 }
+
+// cursorInfo CURSORINFO（GetCursorInfo）
+type cursorInfo struct {
+	cbSize  uint32
+	flags   uint32
+	hCursor uintptr
+	ptX     int32
+	ptY     int32
+}
+
+const cursorShowing = 0x00000001
 
 type bitmapInfoHeader struct {
 	Size          uint32
@@ -87,6 +100,13 @@ func (s *gdiScreen) Frame(buf []byte) ([]byte, error) {
 		uintptr(0x00CC0020|0x40000000))
 	if err != nil && err.(windows.Errno) != 0 {
 		return nil, err
+	}
+	// BitBlt 不含鼠标光标——补画到帧缓冲，否则远程画面永远看不到指针位置
+	var ci cursorInfo
+	ci.cbSize = uint32(unsafe.Sizeof(ci))
+	if r, _, _ := pGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r != 0 && ci.flags&cursorShowing != 0 {
+		// DrawIconEx(hdc, x, y, hIcon, w, h, istep, flickerFree, DI_NORMAL)
+		pDrawIconEx.Call(s.memDC, uintptr(ci.ptX), uintptr(ci.ptY), ci.hCursor, 0, 0, 0, 0, 3)
 	}
 	// DIB 为单例共享缓冲，拷入调用方 buffer（每个 Stream 独立），多会话并发安全
 	n := copy(buf, unsafe.Slice(s.ptr, s.w*s.h*4))
