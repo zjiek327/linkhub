@@ -223,6 +223,9 @@ func (c *Cluster) gossipFrom(peers []models.Node, via string) {
 		if p.Status == "" {
 			p.Status = "online"
 		}
+		// IsSelf 是"来源节点的本机"视角，随 gossip 传播会污染所有节点的
+		// 列表（远端节点被标成本机、目录同步被跳过）——入库前强制清零
+		p.IsSelf = false
 		c.mu.Lock()
 		prev, existed := c.known[p.NodeID]
 		p.Via = via
@@ -381,6 +384,7 @@ func (c *Cluster) ListNodes() []models.Node {
 			continue
 		}
 		seen[k.Node.Address] = true
+		k.Node.IsSelf = false // 防御：间接节点绝不可能是本机
 		out = append(out, k.Node) // 间接节点（带 via）
 	}
 	for _, sn := range c.seedNodes { // 上次运行的节点：重连成功前以离线态显示
