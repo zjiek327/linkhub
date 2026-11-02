@@ -7,6 +7,7 @@
       <span style="flex:1" />
       <template v-if="phase === 'online'">
         <el-button size="small" @click="sendCAD">Ctrl+Alt+Del</el-button>
+        <el-button size="small" title="注入全部按键抬起，解除按键卡死" @click="releaseAllKeys">释放按键</el-button>
         <el-dropdown v-if="mode === 'builtin'" size="small" trigger="click" @command="sendCombo">
           <el-button size="small">快捷键 ▾</el-button>
           <template #dropdown>
@@ -240,6 +241,16 @@ async function sendCombo(keys: number[]) {
 function sendCAD() {
   if (props.mode === 'vnc') { rfb?.sendCtrlAltDel(); return }
   sendCombo([0xffe3, 0xffe9, 0xffff]) // Ctrl Alt Del
+}
+// 一键释放全部按键：release_all 走后端 ReleaseAll（修饰键保底），
+// 再补发全部已映射键的 keyup 突发，覆盖卡死的普通键
+function releaseAllKeys() {
+  if (phase.value !== 'online') return
+  sendInput({ type: 'release_all' })
+  for (const sym of new Set(Object.values(CODE2SYM))) {
+    sendInput({ type: 'key', keysym: sym, down: false })
+  }
+  downMods.clear()
 }
 function toggleFullscreen() { (canvasWrap.value ?? screenEl.value)?.requestFullscreen?.() }
 function disconnect() {

@@ -168,6 +168,10 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		case "key":
 			log.Printf("[desktop] input keysym=0x%x down=%v", ev.Keysym, ev.Down)
 			inj.Key(ev.Keysym, ev.Down)
+		case "release_all":
+			// 一键释放：防前后端任何路径丢 keyup 导致按键卡按下态
+			log.Printf("[desktop] release all keys")
+			inj.ReleaseAll()
 		}
 	}
 	_ = sz
