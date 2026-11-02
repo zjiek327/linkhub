@@ -8,13 +8,15 @@ import (
 	"strings"
 )
 
-// graphicalSession 是否有活跃图形会话（X11 socket / Wayland socket / 常见桌面进程）
+// graphicalSession 是否有活跃图形会话（Wayland socket / X11 socket / 常见桌面进程）
 func graphicalSession() (bool, string) {
+	// Wayland 优先：Wayland 会话必然同时存在 Xwayland 的 X socket，
+	// 先查 X11 会把 Wayland 机器误判成 X11
+	if m, _ := filepath.Glob("/run/user/*/wayland-*"); len(m) > 0 {
+		return true, "检测到 Wayland 图形会话：当前版本不支持自动抓屏。请注销后选「Ubuntu on Xorg」登录（GDM 点用户名后右下角齿轮），或用 Windows 节点体验桌面共享"
+	}
 	if m, _ := filepath.Glob("/tmp/.X11-unix/X*"); len(m) > 0 {
 		return true, "检测到 X11 图形会话：安装并运行 x11vnc（如 x11vnc -display :0 -forever -passwd <密码>）即可共享当前桌面"
-	}
-	if m, _ := filepath.Glob("/run/user/*/wayland-*"); len(m) > 0 {
-		return true, "检测到 Wayland 图形会话：GNOME 46+ 可在「设置 → 共享 → 桌面共享」启用 VNC 模式；其他合成器可用 wayvnc"
 	}
 	// 兜底：扫进程名（Xorg/gnome-shell/kwin/sway/weston/xfce 等）
 	names := []string{"Xorg", "X", "gnome-shell", "kwin_wayland", "kwin_x11", "sway", "weston", "xfce4-session", "lxqt-session", "cinnamon", "mate-session"}
