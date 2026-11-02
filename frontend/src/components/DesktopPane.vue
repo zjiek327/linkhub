@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElButton, ElForm, ElFormItem, ElInput, ElTag, ElAlert } from 'element-plus'
 import RFB from '@novnc/novnc'
 import { wsUrl } from '../api'
@@ -73,7 +73,7 @@ const phaseText = computed(() => ({
 
 // ---------- 内置采集模式 ----------
 function startBuiltin() {
-  if (!canvasEl.value) return
+  if (!canvasEl.value || ws) return
   ctx2d = canvasEl.value.getContext('2d')
   ws = new WebSocket(wsUrl(`/ws/desktop?node=${props.node}`))
   ws.binaryType = 'arraybuffer'
@@ -207,8 +207,14 @@ function disconnect() {
 watch(() => props.mode, m => {
   disconnect()
   phase.value = m === 'vnc' ? 'auth' : 'connecting'
-  if (m === 'builtin') startBuiltin()
+  // nextTick：setup/immediate 阶段 canvas 尚未挂载，等 DOM 就绪再连
+  if (m === 'builtin') nextTick(() => startBuiltin())
 }, { immediate: true })
+
+onMounted(() => {
+  // immediate watcher 触发时（setup 阶段）canvas 未挂载会直接返回，这里补一次真正连接
+  if (props.mode === 'builtin') nextTick(() => startBuiltin())
+})
 
 onUnmounted(() => disconnect())
 </script>
