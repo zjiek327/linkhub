@@ -169,4 +169,12 @@ func (in *x11Input) lookup(keysym uint32) (kc uint8, needShift bool) {
 	return 0, false
 }
 
+func (in *x11Input) ReleaseAll() error {
+	// 无条件补放全部修饰键：keyup 重复是无害的
+	for _, sym := range []uint32{0xffe1, 0xffe2, 0xffe3, 0xffe4, 0xffe9, 0xffea, 0xffe7, 0xffe8} {
+		_ = in.Key(sym, false)
+	}
+	return nil
+}
+
 func (in *x11Input) Close() { in.conn.Close() }

@@ -11,6 +11,8 @@ type Injector interface {
 	Wheel(dy int) error
 	// Key 按键（keysym，见 keysyms.go）
 	Key(keysym uint32, down bool) error
+	// ReleaseAll 释放全部修饰键（会话开始/结束时调用，防修饰键卡按下态）
+	ReleaseAll() error
 	// Close 释放
 	Close()
 }

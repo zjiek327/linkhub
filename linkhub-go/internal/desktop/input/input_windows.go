@@ -135,4 +135,16 @@ func (w winInput) Key(keysym uint32, down bool) error {
 	return w.sendKey(vk, down)
 }
 
+func (winInput) ReleaseAll() error {
+	// 无条件补放全部修饰键：keyup 重复是无害的
+	for _, vk := range []uint16{0x10 /*SHIFT*/, 0x11 /*CONTROL*/, 0x12 /*MENU*/, 0x5B /*LWIN*/, 0x5C /*RWIN*/} {
+		var ki keyboardInput
+		ki.Type = inputKeyboard
+		ki.Ki.WVk = vk
+		ki.Ki.Flags = keyEventfKeyUp
+		pSendInput.Call(1, uintptr(unsafe.Pointer(&ki)), uintptr(sizeofINPUT))
+	}
+	return nil
+}
+
 func (winInput) Close() {}

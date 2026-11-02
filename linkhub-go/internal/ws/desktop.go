@@ -129,6 +129,10 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 	inj, hasInput := input.Open()
 	if inj != nil {
 		defer inj.Close()
+		// 会话开始先释放全部修饰键：上次会话异常断开可能把 Ctrl/Alt 等
+		// 卡在按下态（前端焦点切换丢 keyup），远端会一直触发组合快捷键
+		inj.ReleaseAll()
+		defer inj.ReleaseAll()
 	}
 	if !hasInput {
 		inj = nil

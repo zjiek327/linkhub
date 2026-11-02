@@ -7,6 +7,20 @@
       <span style="flex:1" />
       <template v-if="phase === 'online'">
         <el-button size="small" @click="sendCAD">Ctrl+Alt+Del</el-button>
+        <el-dropdown v-if="mode === 'builtin'" size="small" trigger="click" @command="sendCombo">
+          <el-button size="small">快捷键 ▾</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item :command="[0xff09, 0xffe9]">Alt+Tab</el-dropdown-item>
+              <el-dropdown-item :command="[0xffc3, 0xffe9]">Alt+F4</el-dropdown-item>
+              <el-dropdown-item :command="[0xff1b, 0xffe3, 0xffe1]">Ctrl+Shift+Esc</el-dropdown-item>
+              <el-dropdown-item :command="[0x0072, 0xffe7]">Win+R</el-dropdown-item>
+              <el-dropdown-item :command="[0x0064, 0xffe7]">Win+D</el-dropdown-item>
+              <el-dropdown-item :command="[0x0065, 0xffe7]">Win+E</el-dropdown-item>
+              <el-dropdown-item :command="[0xffe7]">Win</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button size="small" @click="toggleFullscreen">⛶ 全屏</el-button>
         <el-button size="small" type="danger" plain @click="disconnect">断开</el-button>
       </template>
@@ -48,7 +62,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElButton, ElForm, ElFormItem, ElInput, ElTag, ElAlert } from 'element-plus'
+import { ElButton, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElTag, ElAlert } from 'element-plus'
 import RFB from '@novnc/novnc'
 import { wsUrl } from '../api'
 
@@ -67,6 +81,24 @@ let ws: WebSocket | null = null
 let ctx2d: CanvasRenderingContext2D | null = null
 let screenW = 0, screenH = 0
 
+// 修饰键按下追踪。坑：keydown 落在 canvas，随后点击工具栏按钮焦点移走，
+// canvas 永远收不到对应 keyup → 远端修饰键卡死，之后敲键全变组合快捷键。
+// 用 window 级 keyup 兜底 + 断连补放，双保险（后端会话起止也会 ReleaseAll）。
+const MOD_SYMS = new Set([0xffe1, 0xffe2, 0xffe3, 0xffe4, 0xffe9, 0xffea, 0xffe7, 0xffe8])
+const downMods = new Set<number>()
+function releaseMods() {
+  for (const s of downMods) sendInput({ type: 'key', keysym: s, down: false })
+  downMods.clear()
+}
+// window 兜底：焦点不在 canvas 时keyup也到此，补发还按着的修饰键抬起
+function onGlobalKeyUp(e: KeyboardEvent) {
+  const sym = CODE2SYM[e.code]
+  if (sym !== undefined && downMods.has(sym)) {
+    downMods.delete(sym)
+    sendInput({ type: 'key', keysym: sym, down: false })
+  }
+}
+
 const phaseText = computed(() => ({
   auth: '待输入密码', connecting: '连接中…', online: `已连接 ${props.nodeName || '本机'}`, closed: '已断开',
 }[phase.value]))
@@ -78,7 +110,7 @@ function startBuiltin() {
   ws = new WebSocket(wsUrl(`/ws/desktop?node=${props.node}`))
   ws.binaryType = 'arraybuffer'
   ws.onopen = () => { phase.value = 'online'; canvasEl.value?.focus() }
-  ws.onclose = () => { phase.value = 'closed' }
+  ws.onclose = () => { releaseMods(); phase.value = 'closed' }
   ws.onmessage = ev => {
     if (typeof ev.data === 'string') return
     void handleFrame(new Uint8Array(ev.data))
@@ -172,6 +204,7 @@ function onKey(down: boolean, e: KeyboardEvent) {
   }
   if (!sym) return
   e.preventDefault()
+  if (MOD_SYMS.has(sym)) { down ? downMods.add(sym) : downMods.delete(sym) }
   sendInput({ type: 'key', keysym: sym, down })
 }
 
@@ -196,9 +229,21 @@ function connect() {
   })
 }
 
-function sendCAD() { rfb?.sendCtrlAltDel() }
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+// 组合键：顺序按下、逆序抬起（留间隔让系统处理焦点切换等副作用，如 CAD 唤安全屏）
+async function sendCombo(keys: number[]) {
+  if (phase.value !== 'online') return
+  for (const k of keys) { sendInput({ type: 'key', keysym: k, down: true }); await sleep(30) }
+  for (let i = keys.length - 1; i >= 0; i--) { sendInput({ type: 'key', keysym: keys[i], down: false }); await sleep(30) }
+}
+
+function sendCAD() {
+  if (props.mode === 'vnc') { rfb?.sendCtrlAltDel(); return }
+  sendCombo([0xffe3, 0xffe9, 0xffff]) // Ctrl Alt Del
+}
 function toggleFullscreen() { (canvasWrap.value ?? screenEl.value)?.requestFullscreen?.() }
 function disconnect() {
+  releaseMods()
   rfb?.disconnect(); rfb = null
   ws?.close(); ws = null
   phase.value = 'closed'
@@ -212,11 +257,15 @@ watch(() => props.mode, m => {
 }, { immediate: true })
 
 onMounted(() => {
+  window.addEventListener('keyup', onGlobalKeyUp)
   // immediate watcher 触发时（setup 阶段）canvas 未挂载会直接返回，这里补一次真正连接
   if (props.mode === 'builtin') nextTick(() => startBuiltin())
 })
 
-onUnmounted(() => disconnect())
+onUnmounted(() => {
+  window.removeEventListener('keyup', onGlobalKeyUp)
+  disconnect()
+})
 </script>
 
 <style scoped>
