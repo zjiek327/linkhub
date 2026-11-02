@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"sync"
 
 	xgb "github.com/jezek/xgb"
@@ -147,12 +146,20 @@ func pickDisplay() []string {
 }
 
 // authCandidates 候选 XAUTHORITY（"" = 现状默认 ~/.Xauthority）
-// Xwayland 场景 cookie 在 /run/user/$UID/.mutter-Xwaylandauth.*
+// root 运行的 linkhub 采普通用户会话时，cookie 在会话用户的 runtime 目录，
+// 按显示管理器/合成器全用户探测（gdm=Xorg 与 Wayland 都经过它）
 func authCandidates() []string {
 	out := []string{""}
 	if runtime.GOOS == "linux" {
-		if ms, _ := filepath.Glob("/run/user/" + strconv.Itoa(os.Getuid()) + "/.mutter-Xwaylandauth.*"); len(ms) > 0 {
-			out = append(out, ms...)
+		for _, g := range []string{
+			"/run/user/*/gdm/Xauthority",
+			"/run/user/*/.Xauthority",
+			"/run/user/*/.mutter-Xwaylandauth.*", // Xwayland（Wayland 会话）
+			"/home/*/.Xauthority",
+		} {
+			if ms, _ := filepath.Glob(g); len(ms) > 0 {
+				out = append(out, ms...)
+			}
 		}
 	}
 	return out
