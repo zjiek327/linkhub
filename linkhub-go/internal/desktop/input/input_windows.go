@@ -35,6 +35,12 @@ const (
 	keyEventfKeyUp = 0x0002
 )
 
+// SendInput 的 cbSize 必须传 sizeof(INPUT)。INPUT 是联合体，按最大的成员
+// MOUSEINPUT 对齐（x64=40/386=28），与本次注入的事件类型无关——键盘事件传
+// sizeof(KEYBDINPUT 布局 32) 会被 Windows 判非法直接返回 0（键盘静默失效的
+// 根因），鼠标事件恰因 mouseInput 就是最大成员而侥幸正确。
+var sizeofINPUT = uint32(unsafe.Sizeof(mouseInput{}))
+
 type mouseInput struct {
 	Type uint32
 	Mi   struct {
@@ -70,7 +76,7 @@ func (winInput) sendMouse(flags uint32, dx, dy int32, data uint32) error {
 	var mi mouseInput
 	mi.Type = inputMouse
 	mi.Mi.Dx, mi.Mi.Dy, mi.Mi.MouseData, mi.Mi.Flags = dx, dy, data, flags
-	pSendInput.Call(1, uintptr(unsafe.Pointer(&mi)), unsafe.Sizeof(mi))
+	pSendInput.Call(1, uintptr(unsafe.Pointer(&mi)), uintptr(sizeofINPUT))
 	return nil
 }
 
@@ -81,7 +87,7 @@ func (winInput) sendKey(vk uint16, down bool) error {
 	if !down {
 		ki.Ki.Flags = keyEventfKeyUp
 	}
-	pSendInput.Call(1, uintptr(unsafe.Pointer(&ki)), unsafe.Sizeof(ki))
+	pSendInput.Call(1, uintptr(unsafe.Pointer(&ki)), uintptr(sizeofINPUT))
 	return nil
 }
 
