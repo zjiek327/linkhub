@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -112,6 +113,23 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+
+	// 采集持续失败（典型：目标锁屏进入安全桌面，Mag/GDI 均被系统限制）→
+	// 推通知给 web 端，把无声冻结变成可行动提示；输入拦截属 Windows 安全
+	// 边界，只能以 SYSTEM 部署解决，通知里写明
+	var noticeOnce sync.Once
+	stream.OnError(func(streak int, onAlt bool, err error) {
+		if onAlt || streak < 10 {
+			return
+		}
+		noticeOnce.Do(func() {
+			msg, _ := json.Marshal(map[string]string{
+				"type": "notice",
+				"data": "采集持续失败：目标可能在锁屏安全桌面。Windows 会拦截用户进程的画面采集与键盘注入，远程解锁密码页需以 SYSTEM 运行 linkhub；解锁后画面自动恢复。",
+			})
+			_ = c.Write(ctx, websocket.MessageText, msg)
+		})
+	})
 
 	// 下行：采集循环 → WS
 	go func() {

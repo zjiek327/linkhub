@@ -61,6 +61,7 @@
               @wheel.prevent="onWheel"
               @keydown="onKey(true, $event)" @keyup="onKey(false, $event)"
               @contextmenu.prevent />
+      <div v-if="noticeMsg && phase === 'online'" class="desk-notice">{{ noticeMsg }}</div>
       <div v-if="phase !== 'online'" class="builtin-overlay">{{ phaseText }}…</div>
     </div>
   </div>
@@ -110,9 +111,11 @@ const phaseText = computed(() => ({
 }[phase.value]))
 
 // ---------- 内置采集模式 ----------
+const noticeMsg = ref('') // 后端推送的采集异常通知（锁屏安全桌面等）
 function startBuiltin() {
   if (!canvasEl.value || ws) return
   lastRemoteClip = ''
+  noticeMsg.value = ''
   ctx2d = canvasEl.value.getContext('2d')
   ws = new WebSocket(wsUrl(`/ws/desktop?node=${props.node}`))
   ws.binaryType = 'arraybuffer'
@@ -126,6 +129,8 @@ function startBuiltin() {
         if (m.type === 'clip' && typeof m.data === 'string') {
           lastRemoteClip = m.data
           if (clipAuto.value) void writeLocalClip(m.data)
+        } else if (m.type === 'notice' && typeof m.data === 'string') {
+          noticeMsg.value = m.data
         }
       } catch { /* 非 JSON 文本帧忽略 */ }
       return
@@ -324,5 +329,10 @@ onUnmounted(() => {
 .builtin-overlay {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: #aaa; background: rgba(0, 0, 0, .6);
+}
+.desk-notice {
+  position: absolute; top: 8px; left: 8px; right: 8px; z-index: 2;
+  background: rgba(245, 158, 11, .94); color: #1c1917;
+  padding: 6px 10px; border-radius: 6px; font-size: 12px; line-height: 1.5;
 }
 </style>

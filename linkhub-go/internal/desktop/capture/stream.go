@@ -47,7 +47,13 @@ type Stream struct {
 	closed  bool
 	stopCh  chan struct{}
 	once    sync.Once
+	// errHook 帧错误回调（streak=连续失败次数, onAlt=是否已在备用源上；
+	// streak=1 及每 60 次触发，供上层做"采集持续失败"用户通知）
+	errHook func(streak int, onAlt bool, err error)
 }
+
+// OnError 注册帧错误回调（nil 清除）
+func (st *Stream) OnError(h func(streak int, onAlt bool, err error)) { st.errHook = h }
 
 // NewStream 创建采集流（fps=0 默认 12）
 func NewStream(scr Screen, fps int) *Stream {
@@ -93,8 +99,12 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 			if errStreak == 1 || errStreak%120 == 0 {
 				log.Printf("[capture] frame error streak=%d: %v", errStreak, err)
 			}
-			// 连续 3 帧失败：锁屏/安全桌面场景，切备用源（如 Mag→GDI）
-			if errStreak >= 3 && st.alt == nil {
+			if st.errHook != nil && (errStreak == 1 || errStreak%60 == 0) {
+				st.errHook(errStreak, st.alt != nil, err)
+			}
+			// 连续 2 帧失败：锁屏/安全桌面场景，切备用源（如 Mag→GDI）。
+			// Mag 单帧超时 3s，2 帧≈6s 内完成切换（3 帧要 ~9s，用户早已判定卡死）
+			if errStreak >= 2 && st.alt == nil {
 				if alt := AlternateFor(st.scr); alt != nil {
 					log.Printf("[capture] 切换备用采集源 %T（首选源连续失败）", alt)
 					st.primary = st.scr

@@ -1,0 +1,11 @@
+@echo off
+rem LinkHub SYSTEM 启动包装（任务计划程序 InteractiveToken 调用本脚本）
+rem 1. 复制本文件为 run-as-system.bat，填入实际值
+rem 2. 注意：SYSTEM 账户的 linkhub 数据目录在
+rem    C:\Windows\System32\config\systemprofile\.linkhub（节点 ID 会重新生成，
+rem    如需保留原节点身份，把原用户目录下 .linkhub 整个拷到上述路径）
+set LINKHUB_CLUSTER_TOKEN=CHANGE_ME
+set LINKHUB_NODE_NAME=LAPTOP
+set LINKHUB_CLUSTER_ENABLED=true
+set LINKHUB_CLUSTER_SEEDS=http://10.218.146.39:8000
+C:\linkhub\linkhub.exe
