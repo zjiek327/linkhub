@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/jpeg"
+	"log"
 	"sync"
 	"time"
 )
@@ -59,10 +60,13 @@ func NewStream(scr Screen, fps int) *Stream {
 }
 
 // Run 阻塞采集循环；onFrame 收到完整序列化帧（msg=1 帧格式见 capture.go 头注释）
+// 帧错误一律跳过不断流：锁屏/安全桌面/分辨率切换都会让 BitBlt/Mag 瞬时失败，
+// 但解锁后采集自动恢复——会话必须活着撑过整个锁屏周期（远程解锁的前提）
 func (st *Stream) Run(onFrame func([]byte)) error {
 	tick := time.NewTicker(time.Second / time.Duration(st.fps))
 	defer tick.Stop()
 	fullRedraw := true
+	errStreak := 0
 	for {
 		select {
 		case <-st.stopCh:
@@ -71,7 +75,15 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 		}
 		frame, err := st.scr.Frame(st.buf)
 		if err != nil {
-			return err
+			errStreak++
+			if errStreak == 1 || errStreak%120 == 0 {
+				log.Printf("[capture] frame error streak=%d: %v", errStreak, err)
+			}
+			continue
+		}
+		if errStreak > 0 {
+			log.Printf("[capture] frame recovered (streak was %d)", errStreak)
+			errStreak = 0
 		}
 		sz := st.scr.Size()
 		fw, fh := sz.X, sz.Y
