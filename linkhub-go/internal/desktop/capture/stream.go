@@ -37,14 +37,16 @@ type block struct {
 
 // Stream 采集会话：定时抓帧、块级差分、JPEG 编码，帧通过 out 回调发出
 type Stream struct {
-	mu     sync.Mutex
-	scr    Screen
-	last   []byte // 上一帧 BGRA
-	buf    []byte // 抓帧缓冲
-	fps    int
-	closed bool
-	stopCh chan struct{}
-	once   sync.Once
+	mu      sync.Mutex
+	scr     Screen
+	primary Screen // 切换前的首选源（备用源工作期间保留，用于恢复探测）
+	alt     Screen // 当前备用源（nil=未切换）
+	last    []byte // 上一帧 BGRA
+	buf     []byte // 抓帧缓冲
+	fps     int
+	closed  bool
+	stopCh  chan struct{}
+	once    sync.Once
 }
 
 // NewStream 创建采集流（fps=0 默认 12）
@@ -67,11 +69,23 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 	defer tick.Stop()
 	fullRedraw := true
 	errStreak := 0
+	successes := 0
+	probeOK := make(chan bool, 1)
 	for {
 		select {
 		case <-st.stopCh:
 			return nil
 		case <-tick.C:
+		case ok := <-probeOK:
+			// 备用源工作期间探测到首选源恢复（解锁）：切回
+			if ok && st.alt != nil {
+				log.Printf("[capture] 首选采集源恢复，切回")
+				st.scr = st.primary
+				st.alt = nil
+				fullRedraw = true
+				st.resizeBuf(st.scr)
+			}
+			continue
 		}
 		frame, err := st.scr.Frame(st.buf)
 		if err != nil {
@@ -79,11 +93,37 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 			if errStreak == 1 || errStreak%120 == 0 {
 				log.Printf("[capture] frame error streak=%d: %v", errStreak, err)
 			}
+			// 连续 3 帧失败：锁屏/安全桌面场景，切备用源（如 Mag→GDI）
+			if errStreak >= 3 && st.alt == nil {
+				if alt := AlternateFor(st.scr); alt != nil {
+					log.Printf("[capture] 切换备用采集源 %T（首选源连续失败）", alt)
+					st.primary = st.scr
+					st.alt = alt
+					st.scr = alt
+					fullRedraw = true
+					st.resizeBuf(alt)
+					errStreak = 0
+				}
+			}
 			continue
 		}
 		if errStreak > 0 {
 			log.Printf("[capture] frame recovered (streak was %d)", errStreak)
 			errStreak = 0
+		}
+		if st.alt != nil {
+			// 备用源每 150 帧成功（≈12s@12fps）异步探测首选源是否恢复；
+			// 探测走独立缓冲，Mag 的 3s 超时不阻塞采集循环
+			successes++
+			if successes%150 == 0 && len(probeOK) == 0 {
+				p := st.primary
+				go func() {
+					sz := p.Size()
+					if _, err := p.Frame(make([]byte, sz.X*sz.Y*4)); err == nil {
+						probeOK <- true
+					}
+				}()
+			}
 		}
 		sz := st.scr.Size()
 		fw, fh := sz.X, sz.Y
@@ -143,8 +183,13 @@ func serializeFrame(w, h int, blocks []block) []byte {
 	return out
 }
 
-func put16(b []byte, v int)      { b[0] = byte(v); b[1] = byte(v >> 8) }
-func put32(b []byte, v int)      { b[0] = byte(v); b[1] = byte(v >> 8); b[2] = byte(v >> 16); b[3] = byte(v >> 24) }
+func put16(b []byte, v int) { b[0] = byte(v); b[1] = byte(v >> 8) }
+func put32(b []byte, v int) {
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
+	b[3] = byte(v >> 24)
+}
 
 // blockDiffers 比较上一帧与当前帧的指定块（快速路径：4 字节步进抽样）
 func blockDiffers(a, b []byte, stride, x, y, w, h int) bool {
@@ -166,4 +211,13 @@ func (st *Stream) Stop() {
 		close(st.stopCh)
 		st.scr.Close()
 	})
+}
+
+// resizeBuf 按新采集源尺寸重建缓冲（切换 Mag↔GDI 时尺寸可能变化）
+func (st *Stream) resizeBuf(s Screen) {
+	sz := s.Size()
+	if n := sz.X * sz.Y * 4; n > cap(st.buf) || n > cap(st.last) {
+		st.buf = make([]byte, n)
+		st.last = make([]byte, n)
+	}
 }

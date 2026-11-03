@@ -12,21 +12,21 @@ import (
 )
 
 var (
-	user32   = windows.NewLazySystemDLL("user32.dll")
-	gdi32    = windows.NewLazySystemDLL("gdi32.dll")
+	user32 = windows.NewLazySystemDLL("user32.dll")
+	gdi32  = windows.NewLazySystemDLL("gdi32.dll")
 
-	pGetSystemMetrics = user32.NewProc("GetSystemMetrics")
-	pGetDC            = user32.NewProc("GetDC")
-	pReleaseDC        = user32.NewProc("ReleaseDC")
+	pGetSystemMetrics   = user32.NewProc("GetSystemMetrics")
+	pGetDC              = user32.NewProc("GetDC")
+	pReleaseDC          = user32.NewProc("ReleaseDC")
 	pCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
-	pDeleteDC         = gdi32.NewProc("DeleteDC")
-	pSelectObject     = gdi32.NewProc("SelectObject")
-	pDeleteObject     = gdi32.NewProc("DeleteObject")
-	pBitBlt           = gdi32.NewProc("BitBlt")
-	pCreateDIBSection = gdi32.NewProc("CreateDIBSection")
-	pGetCursorInfo    = user32.NewProc("GetCursorInfo")
-	pDrawIconEx       = user32.NewProc("DrawIconEx")
-	pSetDpiAware      = user32.NewProc("SetProcessDpiAwarenessContext")
+	pDeleteDC           = gdi32.NewProc("DeleteDC")
+	pSelectObject       = gdi32.NewProc("SelectObject")
+	pDeleteObject       = gdi32.NewProc("DeleteObject")
+	pBitBlt             = gdi32.NewProc("BitBlt")
+	pCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
+	pGetCursorInfo      = user32.NewProc("GetCursorInfo")
+	pDrawIconEx         = user32.NewProc("DrawIconEx")
+	pSetDpiAware        = user32.NewProc("SetProcessDpiAwarenessContext")
 )
 
 // Per-Monitor V2 DPI 感知：此后 GetSystemMetrics/GetDC 一律返回物理像素。
@@ -40,10 +40,10 @@ func init() {
 
 type gdiScreen struct {
 	dc, memDC, dib uintptr
-	oldObj        uintptr
-	ptr           *byte
-	w, h          int
-	mu            sync.Mutex // Frame 串行化：DIB 为进程级单例共享
+	oldObj         uintptr
+	ptr            *byte
+	w, h           int
+	mu             sync.Mutex // Frame 串行化：DIB 为进程级单例共享
 }
 
 // cursorInfo CURSORINFO（GetCursorInfo）
@@ -58,16 +58,16 @@ type cursorInfo struct {
 const cursorShowing = 0x00000001
 
 type bitmapInfoHeader struct {
-	Size          uint32
-	Width         int32
-	Height        int32 // 负值 = top-down
-	Planes        uint16
-	BitCount      uint16
-	Compression   uint32
-	SizeImage     uint32
-	XPels, YPels  int32
-	ClrUsed       uint32
-	ClrImportant  uint32
+	Size         uint32
+	Width        int32
+	Height       int32 // 负值 = top-down
+	Planes       uint16
+	BitCount     uint16
+	Compression  uint32
+	SizeImage    uint32
+	XPels, YPels int32
+	ClrUsed      uint32
+	ClrImportant uint32
 }
 
 func sm(i int) int {
@@ -157,4 +157,18 @@ func open() (Screen, bool) {
 	}
 	singleton = scr
 	return scr, true
+}
+
+// alternateFor：Mag 连续帧错误（典型：锁屏切安全桌面后 Mag 窗口停止合成，
+// 每次 Frame 3s 超时）时回退 GDI——GDI 在安全桌面下通常能给出黑帧+光标，
+// 至少让远程鼠标可见可控。GDI 已在用（或非 Windows）返回 nil。
+func alternateFor(s Screen) Screen {
+	if _, isMag := s.(*magScreen); !isMag {
+		return nil
+	}
+	g, ok := OpenGDI()
+	if !ok {
+		return nil
+	}
+	return g
 }

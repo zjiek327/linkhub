@@ -21,3 +21,8 @@ type Screen interface {
 
 // Open 打开平台采集器（windows / linux+x11；其余返回 ok=false → 走 VNC 模式）
 func Open() (Screen, bool) { return open() }
+
+// AlternateFor 返回 s 的备用采集源（无则 nil）。Stream 在连续帧错误时切换：
+// Windows 锁屏切安全桌面后 Mag 窗口停止合成必失败，回退 GDI（黑帧+光标，
+// 鼠标仍可见可控），解锁后错误消失自动切回首选源
+func AlternateFor(s Screen) Screen { return alternateFor(s) }

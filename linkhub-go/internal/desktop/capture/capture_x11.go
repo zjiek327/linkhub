@@ -198,3 +198,6 @@ func (s *x11Screen) Frame(buf []byte) ([]byte, error) { return s.grab(buf) }
 func (s *x11Screen) Close() {}
 
 func open() (Screen, bool) { return OpenX11() }
+
+// alternateFor X11 无备用源（Wayland 会话在 open 即被守卫拒绝）
+func alternateFor(s Screen) Screen { return nil }

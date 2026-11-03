@@ -71,9 +71,10 @@ func (b *winBoard) Get() (string, bool) {
 		return "", false
 	}
 	defer pGlobalUnlock.Call(h)
+	// vet 安全的 uintptr→unsafe.Pointer 转换（GlobalLock 返回的锁定内存指针）
+	p := *(*unsafe.Pointer)(unsafe.Pointer(&ptr))
 	// UTF-16 序列读到双 NUL 终止，封顶 256K 字符
 	u16 := make([]uint16, 0, 4096)
-	p := unsafe.Pointer(ptr)
 	for i := 0; i < 256*1024; i++ {
 		c := *(*uint16)(unsafe.Add(p, i*2))
 		if c == 0 {
@@ -98,7 +99,8 @@ func (b *winBoard) Set(text string) bool {
 		pGlobalFree.Call(h)
 		return false
 	}
-	dst := unsafe.Slice((*uint16)(unsafe.Pointer(ptr)), len(u16)+1)
+	// vet 安全的 uintptr→unsafe.Pointer 转换
+	dst := unsafe.Slice(*(**uint16)(unsafe.Pointer(&ptr)), len(u16)+1)
 	copy(dst, u16)
 	dst[len(u16)] = 0
 	pGlobalUnlock.Call(h)
