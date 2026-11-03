@@ -15,6 +15,7 @@ import (
 	"linkhub/internal/cluster"
 	"linkhub/internal/desktop"
 	"linkhub/internal/desktop/capture"
+	"linkhub/internal/desktop/clipboard"
 	"linkhub/internal/desktop/input"
 )
 
@@ -105,9 +106,9 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.Close(websocket.StatusNormalClosure, "")
+	c.SetReadLimit(1 << 20) // 上行含 clip_set 剪贴板文本帧（≤256KB），防默认 32KB 断流
 
 	stream := capture.NewStream(scr, 12)
-	sz := scr.Size()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -137,6 +138,33 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 	if !hasInput {
 		inj = nil
 	}
+
+	// 剪贴板同步：2s 轮询系统剪贴板，变化推给浏览器（文本帧 {"type":"clip","data":...}）
+	board, _ := clipboard.Open()
+	if board != nil {
+		defer board.Close()
+		go func() {
+			tick := time.NewTicker(2 * time.Second)
+			defer tick.Stop()
+			lastClip := ""
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+					s, ok := board.Get()
+					if !ok || s == "" || s == lastClip {
+						continue
+					}
+					lastClip = s
+					msg, _ := json.Marshal(map[string]string{"type": "clip", "data": s})
+					if err := c.Write(ctx, websocket.MessageText, msg); err != nil {
+						return
+					}
+				}
+			}
+		}()
+	}
 	for {
 		typ, data, err := c.Read(ctx)
 		if err != nil {
@@ -149,12 +177,23 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 			Type   string `json:"type"` // mouse_move | mouse_button | wheel | key
 			X      int    `json:"x"`
 			Y      int    `json:"y"`
-			Button  int    `json:"button"`
-			Down    bool   `json:"down"`
-			Dy      int    `json:"dy"`
-			Keysym  uint32 `json:"keysym"`
+			Button int    `json:"button"`
+			Down   bool   `json:"down"`
+			Dy     int    `json:"dy"`
+			Keysym uint32 `json:"keysym"`
+			Data   string `json:"data"` // clip_set 剪贴板文本
 		}
-		if json.Unmarshal(data, &ev) != nil || inj == nil {
+		if err := json.Unmarshal(data, &ev); err != nil {
+			continue
+		}
+		if ev.Type == "clip_set" {
+			// 浏览器 → 远端系统剪贴板（无输入注入器的只读会话也可用）
+			if board != nil && ev.Data != "" {
+				board.Set(ev.Data)
+			}
+			continue
+		}
+		if inj == nil {
 			continue
 		}
 		switch ev.Type {
@@ -174,7 +213,6 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 			inj.ReleaseAll()
 		}
 	}
-	_ = sz
 }
 
 // localVNC 本机 VNC 代理：浏览器 WS ⇄ 127.0.0.1:port

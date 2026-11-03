@@ -8,6 +8,11 @@
       <template v-if="phase === 'online'">
         <el-button size="small" @click="sendCAD">Ctrl+Alt+Del</el-button>
         <el-button size="small" title="注入全部按键抬起，解除按键卡死" @click="releaseAllKeys">释放按键</el-button>
+        <template v-if="mode === 'builtin'">
+          <el-button size="small" title="把本地剪贴板文本发送到远程" @click="sendLocalClip">↑发送剪贴板</el-button>
+          <el-button size="small" title="把最近一次远程剪贴板取回到本地" @click="pullRemoteClip">↓取回剪贴板</el-button>
+          <el-switch v-model="clipAuto" size="small" title="远程剪贴板变化时自动写入本地（需页面聚焦）" />
+        </template>
         <el-dropdown v-if="mode === 'builtin'" size="small" trigger="click" @command="sendCombo">
           <el-button size="small">快捷键 ▾</el-button>
           <template #dropdown>
@@ -63,7 +68,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElButton, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElTag, ElAlert } from 'element-plus'
+import { ElButton, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElSwitch, ElTag, ElAlert } from 'element-plus'
 import RFB from '@novnc/novnc'
 import { wsUrl } from '../api'
 
@@ -107,13 +112,24 @@ const phaseText = computed(() => ({
 // ---------- 内置采集模式 ----------
 function startBuiltin() {
   if (!canvasEl.value || ws) return
+  lastRemoteClip = ''
   ctx2d = canvasEl.value.getContext('2d')
   ws = new WebSocket(wsUrl(`/ws/desktop?node=${props.node}`))
   ws.binaryType = 'arraybuffer'
   ws.onopen = () => { phase.value = 'online'; canvasEl.value?.focus() }
   ws.onclose = () => { releaseMods(); phase.value = 'closed' }
   ws.onmessage = ev => {
-    if (typeof ev.data === 'string') return
+    if (typeof ev.data === 'string') {
+      // 剪贴板推送：{"type":"clip","data":"..."}
+      try {
+        const m = JSON.parse(ev.data)
+        if (m.type === 'clip' && typeof m.data === 'string') {
+          lastRemoteClip = m.data
+          if (clipAuto.value) void writeLocalClip(m.data)
+        }
+      } catch { /* 非 JSON 文本帧忽略 */ }
+      return
+    }
     void handleFrame(new Uint8Array(ev.data))
   }
 }
@@ -251,6 +267,22 @@ function releaseAllKeys() {
     sendInput({ type: 'key', keysym: sym, down: false })
   }
   downMods.clear()
+}
+// ---------- 剪贴板同步 ----------
+const clipAuto = ref(false) // 远程→本地自动写开关（默认关：防远程内容 surprise 覆盖本地）
+let lastRemoteClip = ''
+async function writeLocalClip(t: string) {
+  try { await navigator.clipboard.writeText(t) } catch { /* 无权限/页面未聚焦 */ }
+}
+async function sendLocalClip() {
+  if (phase.value !== 'online') return
+  try {
+    const t = await navigator.clipboard.readText()
+    if (t) sendInput({ type: 'clip_set', data: t.slice(0, 262144) })
+  } catch { /* 用户拒绝或浏览器不支持 */ }
+}
+function pullRemoteClip() {
+  if (lastRemoteClip) void writeLocalClip(lastRemoteClip)
 }
 function toggleFullscreen() { (canvasWrap.value ?? screenEl.value)?.requestFullscreen?.() }
 function disconnect() {
