@@ -208,9 +208,21 @@ function onMouseButton(down: boolean, e: MouseEvent) {
   canvasEl.value?.focus()
   sendInput({ type: 'mouse_button', button: e.button + 1, down })
 }
+let wheelAcc = 0 // 滚轮像素累加器（见 onWheel）
 function onWheel(e: WheelEvent) {
   if (phase.value !== 'online') return
-  sendInput({ type: 'wheel', dy: e.deltaY > 0 ? 1 : -1 })
+  e.preventDefault()
+  // 高分辨率触控板/平滑滚轮一次滑动发多个小增量事件，原实现每个事件一律发一格
+  // （后端 ×120=一整格）→ 轻滑一页飞掉。统一折像素累加，满 120（Windows 一格
+  // WHEEL_DELTA / noVNC 同款）发一格，剩余留待下个事件
+  let d = e.deltaY
+  if (e.deltaMode === 1) d *= 16        // DOM_DELTA_LINE：行→像素
+  else if (e.deltaMode === 2) d *= 600  // DOM_DELTA_PAGE：页→像素
+  wheelAcc += d
+  while (Math.abs(wheelAcc) >= 120) {
+    sendInput({ type: 'wheel', dy: wheelAcc > 0 ? 1 : -1 })
+    wheelAcc -= Math.sign(wheelAcc) * 120
+  }
 }
 
 // KeyboardEvent.code → X11 keysym（两平台后端统一按 keysym 处理）
