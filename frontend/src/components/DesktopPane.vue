@@ -9,9 +9,7 @@
         <el-button size="small" @click="sendCAD">Ctrl+Alt+Del</el-button>
         <el-button size="small" title="注入全部按键抬起，解除按键卡死" @click="releaseAllKeys">释放按键</el-button>
         <template v-if="mode === 'builtin'">
-          <el-button size="small" title="把本地剪贴板文本发送到远程" @click="sendLocalClip">↑发送剪贴板</el-button>
-          <el-button size="small" title="把最近一次远程剪贴板取回到本地" @click="pullRemoteClip">↓取回剪贴板</el-button>
-          <el-switch v-model="clipAuto" size="small" title="远程剪贴板变化时自动写入本地（需页面聚焦）" />
+          <el-button size="small" title="本地与远程剪贴板互传（对话框内 Ctrl+V 粘贴，兼容 http 非安全上下文）" @click="clipDlg = true">剪贴板</el-button>
         </template>
         <el-dropdown v-if="mode === 'builtin'" size="small" trigger="click" @command="sendCombo">
           <el-button size="small">快捷键 ▾</el-button>
@@ -64,12 +62,33 @@
       <div v-if="noticeMsg && phase === 'online'" class="desk-notice">{{ noticeMsg }}</div>
       <div v-if="phase !== 'online'" class="builtin-overlay">{{ phaseText }}…</div>
     </div>
+
+    <!-- 剪贴板同步对话框：本地→远程在框内 Ctrl+V 再发送；远程→本地显示+复制 -->
+    <el-dialog v-model="clipDlg" title="剪贴板同步" width="520px" append-to-body>
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:#888;margin-bottom:4px">本地 → 远程：在此粘贴（Ctrl+V），发送后到远程窗口 Ctrl+V</div>
+        <el-input v-model="clipText" type="textarea" :rows="4" placeholder="在此 Ctrl+V 粘贴本地内容" />
+        <div style="margin-top:6px;text-align:right">
+          <el-button size="small" type="primary" :disabled="!clipText || phase !== 'online'" @click="sendClipText">发送到远程</el-button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#888;margin-bottom:4px">远程 → 本地：远程复制后内容每 2s 自动出现在这里</div>
+        <textarea ref="remoteClipEl" :value="lastRemoteClip" readonly rows="4"
+                  style="width:100%;box-sizing:border-box;resize:vertical;font:inherit;padding:5px 8px;border-radius:4px;border:1px solid #ccc;background:transparent;color:inherit"
+                  placeholder="（空）"></textarea>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:10px;justify-content:flex-end">
+          <el-switch v-model="clipAuto" size="small" inactive-text="变化自动写入本地(仅HTTPS)" />
+          <el-button size="small" :disabled="!lastRemoteClip" @click="copyRemoteClip">复制内容</el-button>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElButton, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElSwitch, ElTag, ElAlert } from 'element-plus'
+import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElSwitch, ElTag, ElAlert } from 'element-plus'
 import RFB from '@novnc/novnc'
 import { wsUrl } from '../api'
 
@@ -274,20 +293,27 @@ function releaseAllKeys() {
   downMods.clear()
 }
 // ---------- 剪贴板同步 ----------
-const clipAuto = ref(false) // 远程→本地自动写开关（默认关：防远程内容 surprise 覆盖本地）
+// http 非安全上下文 navigator.clipboard 不存在（Clipboard API 限 HTTPS/localhost），
+// 故本地→远程走"对话框内 Ctrl+V 粘贴再发送"的通用路径；远程→本地用 execCommand 复制兜底
+const clipDlg = ref(false)
+const clipAuto = ref(false) // 远程→本地自动写开关（仅安全上下文有效，默认关）
+const clipText = ref('')    // 待发送到远程
+const remoteClipEl = ref<HTMLTextAreaElement>()
 let lastRemoteClip = ''
-async function writeLocalClip(t: string) {
-  try { await navigator.clipboard.writeText(t) } catch { /* 无权限/页面未聚焦 */ }
+function writeLocalClip(t: string) {
+  void navigator.clipboard?.writeText(t)?.catch?.(() => { /* 非安全上下文/无权限 */ })
 }
-async function sendLocalClip() {
-  if (phase.value !== 'online') return
-  try {
-    const t = await navigator.clipboard.readText()
-    if (t) sendInput({ type: 'clip_set', data: t.slice(0, 262144) })
-  } catch { /* 用户拒绝或浏览器不支持 */ }
+function sendClipText() {
+  if (phase.value !== 'online' || !clipText.value) return
+  sendInput({ type: 'clip_set', data: clipText.value.slice(0, 262144) })
+  clipText.value = ''
 }
-function pullRemoteClip() {
-  if (lastRemoteClip) void writeLocalClip(lastRemoteClip)
+function copyRemoteClip() {
+  const el = remoteClipEl.value
+  if (!el || !lastRemoteClip) return
+  el.focus()
+  el.select()
+  try { document.execCommand('copy') } catch { /* 老浏览器兜底也失败则忽略 */ }
 }
 function toggleFullscreen() { (canvasWrap.value ?? screenEl.value)?.requestFullscreen?.() }
 function disconnect() {
