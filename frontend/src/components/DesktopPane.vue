@@ -148,9 +148,14 @@ const phaseText = computed(() => ({
 // ---------- 内置采集模式 ----------
 const noticeMsg = ref('') // 后端推送的采集异常通知（锁屏安全桌面等）
 let directFailed = false // 直连失败后回落中继（每次挂载只试一次，防抖动）
+let connecting = false   // 连接进行中守卫：startBuiltin 是 async，await 窗口内 ws 尚未赋值，
+                         // watch(immediate)+onMounted 会各调一次 startBuiltin——没有此守卫会建两条连接，
+                         // 模块 ws 指向后建的那条（可能是失败的中继），画面却来自先建的直连：
+                         // 视频正常而输入/perf 全发往死 socket（鼠标失控+零上行日志的元凶）
 
 async function startBuiltin() {
-  if (!canvasEl.value || ws) return
+  if (!canvasEl.value || ws || connecting) return
+  connecting = true
   lastRemoteClip = ''
   noticeMsg.value = ''
   ctx2d = canvasEl.value.getContext('2d')
@@ -163,7 +168,8 @@ async function startBuiltin() {
     const direct = await resolveDirectUrl()
     if (direct) { url = direct; isDirect = true }
   }
-  openBuiltinWS(url, isDirect)
+  openBuiltinWS(url, isDirect) // 内部同步赋值 ws；此后 connecting=false，重复调用被 ws 守卫挡住
+  connecting = false
 }
 
 // 从集群节点表解析目标节点地址构造直连 URL；本机/无地址/查询失败返回 null
@@ -189,12 +195,14 @@ function openBuiltinWS(url: string, isDirect: boolean) {
   }, 2500)
   sock.onopen = () => {
     window.clearTimeout(openTimer)
+    if (ws !== sock) return // 过期 socket（双重连接竞态残留）：不干扰当前会话状态
     phase.value = 'online'
     canvasEl.value?.focus()
   }
   sock.onclose = () => {
     window.clearTimeout(openTimer)
     releaseMods()
+    if (ws !== sock) return // 过期 socket 的关闭事件直接忽略
     if (isDirect && !directFailed) {
       directFailed = true
       ws = null
