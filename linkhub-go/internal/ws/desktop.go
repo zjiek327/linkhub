@@ -132,11 +132,27 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 
-	// 下行：采集循环 → WS
+	// 下行：采集循环 → WS（E 方案：累计写出耗时，随 OnPerf 窗口一并打日志）
+	var perfWFrames int
+	var perfWTime time.Duration
+	stream.OnPerf(func(s capture.PerfSample) {
+		var avgW time.Duration
+		if perfWFrames > 0 {
+			avgW = perfWTime / time.Duration(perfWFrames)
+		}
+		log.Printf("[perf] cap=%.1f diff=%.1f enc=%.1f ser=%.1f write=%.1f ms | dirty=%d payload=%.0fKB frames=%d",
+			s.AvgCapture.Seconds()*1000, s.AvgDiff.Seconds()*1000, s.AvgEncode.Seconds()*1000,
+			s.AvgSerialize.Seconds()*1000, avgW.Seconds()*1000, s.AvgDirty, float64(s.AvgPayloadBytes)/1024, s.Frames)
+		perfWFrames, perfWTime = 0, 0
+	})
 	go func() {
 		defer cancel()
 		if err := stream.Run(func(frame []byte) {
-			if werr := c.Write(ctx, websocket.MessageBinary, frame); werr != nil {
+			tw := time.Now()
+			werr := c.Write(ctx, websocket.MessageBinary, frame)
+			perfWFrames++
+			perfWTime += time.Since(tw)
+			if werr != nil {
 				return
 			}
 		}); err != nil {
@@ -194,14 +210,18 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var ev struct {
-			Type   string `json:"type"` // mouse_move | mouse_button | wheel | key
-			X      int    `json:"x"`
-			Y      int    `json:"y"`
-			Button int    `json:"button"`
-			Down   bool   `json:"down"`
-			Dy     int    `json:"dy"`
-			Keysym uint32 `json:"keysym"`
-			Data   string `json:"data"` // clip_set 剪贴板文本
+			Type     string `json:"type"` // mouse_move | mouse_button | wheel | key
+			X        int    `json:"x"`
+			Y        int    `json:"y"`
+			Button   int    `json:"button"`
+			Down     bool   `json:"down"`
+			Dy       int    `json:"dy"`
+			Keysym   uint32 `json:"keysym"`
+			Data     string `json:"data"` // clip_set 剪贴板文本
+			RenderMs int    `json:"render_ms"` // perf 浏览器渲染累计（窗口期）
+			Frames   int    `json:"frames"`    // perf 窗口期渲染帧数
+			Dropped  int    `json:"dropped"`   // perf 窗口期被覆盖丢弃帧数
+			Buf      int    `json:"buf"`       // perf ws.bufferedAmount（上行积压）
 		}
 		if err := json.Unmarshal(data, &ev); err != nil {
 			continue
@@ -211,6 +231,12 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 			if board != nil && ev.Data != "" {
 				board.Set(ev.Data)
 			}
+			continue
+		}
+		if ev.Type == "perf" {
+			// E 方案：浏览器渲染耗时回传（分段耗时见 [perf] 行）
+			log.Printf("[desktop] browser render=%dms/%d帧 dropped=%d buffered=%d",
+				ev.RenderMs, ev.Frames, ev.Dropped, ev.Buf)
 			continue
 		}
 		if inj == nil {

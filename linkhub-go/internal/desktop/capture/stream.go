@@ -64,10 +64,25 @@ type Stream struct {
 	// errHook 帧错误回调（streak=连续失败次数, onAlt=是否已在备用源上；
 	// streak=1 及每 60 次触发，供上层做"采集持续失败"用户通知）
 	errHook func(streak int, onAlt bool, err error)
+	perfSink func(PerfSample)
 }
 
 // OnError 注册帧错误回调（nil 清除）
 func (st *Stream) OnError(h func(streak int, onAlt bool, err error)) { st.errHook = h }
+
+// PerfSample 采集管线分段耗时采样（每 perfEvery 帧平均一次，诊断延迟用）
+type PerfSample struct {
+	Frames          int
+	AvgCapture      time.Duration // Frame() 抓屏
+	AvgDiff         time.Duration // 差分扫描
+	AvgEncode       time.Duration // 并行 JPEG 编码
+	AvgSerialize    time.Duration // 帧打包
+	AvgDirty        int           // 平均脏块数
+	AvgPayloadBytes int           // 平均帧字节
+}
+
+// OnPerf 注册分段耗时上报回调（nil 关闭）
+func (st *Stream) OnPerf(h func(PerfSample)) { st.perfSink = h }
 
 // NewStream 创建采集流（fps<=0 用默认 24，可用 LINKHUB_DESKTOP_FPS 覆盖，上限 60）
 func NewStream(scr Screen, fps int) *Stream {
@@ -99,6 +114,21 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 	errStreak := 0
 	successes := 0
 	probeOK := make(chan bool, 1)
+	// E 方案分段计时：每 perfEvery 帧汇总平均一次（仅成功出帧计入）
+	const perfEvery = 48 // ≈2s@24fps
+	var pCapture, pDiff, pEncode, pSerialize time.Duration
+	var pDirty, pSize, pFrames int
+	report := func() {
+		if st.perfSink == nil || pFrames == 0 {
+			pCapture, pDiff, pEncode, pSerialize, pDirty, pSize, pFrames = 0, 0, 0, 0, 0, 0, 0
+			return
+		}
+		n := time.Duration(pFrames)
+		st.perfSink(PerfSample{Frames: pFrames,
+			AvgCapture: pCapture / n, AvgDiff: pDiff / n, AvgEncode: pEncode / n, AvgSerialize: pSerialize / n,
+			AvgDirty: pDirty / pFrames, AvgPayloadBytes: pSize / pFrames})
+		pCapture, pDiff, pEncode, pSerialize, pDirty, pSize, pFrames = 0, 0, 0, 0, 0, 0, 0
+	}
 	for {
 		select {
 		case <-st.stopCh:
@@ -115,6 +145,7 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 			}
 			continue
 		}
+		tc := time.Now()
 		frame, err := st.scr.Frame(st.buf)
 		if err != nil {
 			errStreak++
@@ -162,6 +193,8 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 		if len(frame) < fw*fh*4 {
 			continue // 尺寸变化等异常帧，跳过
 		}
+		pCapture += time.Since(tc)
+		td := time.Now()
 
 		// 块差分：先收集脏块，再并行编码（块间无依赖，按索引保序；
 		// 多核并行把编码耗时降为 1/N，是高 fps 下的关键路径）
@@ -181,6 +214,8 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 		if len(dirty) == 0 {
 			continue
 		}
+		pDiff += time.Since(td)
+		te := time.Now()
 		// 自适应质量：脏块超 1/6（运动帧）降 q40 减字节→降 WS 写出与网络耗时；
 		// 静止/小变动 q60 保清晰度
 		quality := 60
@@ -204,6 +239,8 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 			}(i, d)
 		}
 		encWG.Wait()
+		pEncode += time.Since(te)
+		ts := time.Now()
 		blocks := make([]block, 0, len(dirty))
 		for i, d := range dirty {
 			if jpegs[i] != nil {
@@ -213,6 +250,14 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 		out := serializeFrame(fw, fh, blocks)
 		fullRedraw = false
 		onFrame(out)
+		// E 方案：onFrame 之后统计（写出耗时在回调内累计），凑满窗口上报
+		pSerialize += time.Since(ts)
+		pDirty += len(dirty)
+		pSize += len(out)
+		pFrames++
+		if pFrames >= perfEvery {
+			report()
+		}
 	}
 }
 

@@ -119,6 +119,7 @@ const canvasWrap = ref<HTMLElement>()
 
 let rfb: RFB | null = null
 let ws: WebSocket | null = null
+let perfTimer = 0 // E 方案渲染统计回传定时器
 let ctx2d: CanvasRenderingContext2D | null = null
 let screenW = 0, screenH = 0
 
@@ -227,8 +228,13 @@ function openBuiltinWS(url: string, isDirect: boolean) {
 // 顺序错乱。12fps 时积压不明显，24fps 下旧实现积压数秒且鼠标反馈看起来"死掉"
 let framePending: Uint8Array | null = null
 let framePumping = false
+// E 方案：渲染耗时统计（窗口期累计，2s 随 perf 消息回传 LAPTOP 打日志）
+let perfFrames = 0
+let perfRenderMs = 0
+let perfDropped = 0
 
 function queueFrame(f: Uint8Array) {
+  if (framePending) perfDropped++ // 被覆盖丢弃的中间帧（管线跟不上的量化指标）
   framePending = f // 覆盖未渲染的旧帧
   if (framePumping) return
   framePumping = true
@@ -236,7 +242,10 @@ function queueFrame(f: Uint8Array) {
     while (framePending) {
       const cur = framePending
       framePending = null
+      const t0 = performance.now()
       await renderFrame(cur)
+      perfRenderMs += performance.now() - t0
+      perfFrames++
     }
     framePumping = false
   })()
@@ -494,12 +503,20 @@ watch(() => props.mode, m => {
 
 onMounted(() => {
   window.addEventListener('keyup', onGlobalKeyUp)
+  // E 方案：每 2s 把窗口期渲染统计回传 LAPTOP（[desktop] browser 日志行）
+  perfTimer = window.setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN && perfFrames > 0) {
+      sendInput({ type: 'perf', render_ms: Math.round(perfRenderMs), frames: perfFrames, dropped: perfDropped, buf: ws.bufferedAmount })
+    }
+    perfFrames = 0; perfRenderMs = 0; perfDropped = 0
+  }, 2000)
   // immediate watcher 触发时（setup 阶段）canvas 未挂载会直接返回，这里补一次真正连接
   if (props.mode === 'builtin') nextTick(() => startBuiltin())
 })
 
 onUnmounted(() => {
   window.removeEventListener('keyup', onGlobalKeyUp)
+  window.clearInterval(perfTimer)
   disconnect()
 })
 </script>
