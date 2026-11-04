@@ -95,6 +95,7 @@ func (h *DesktopHandler) localDesktop(w http.ResponseWriter, r *http.Request) {
 }
 
 // localBuiltin 内置采集会话：下行 JPEG 脏矩形帧（二进制），上行输入事件（JSON 文本帧）
+var lastMoveLog time.Time // mouse_move 限频日志（诊断输入链路用）
 func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 	scr, ok := capture.Open()
 	if !ok {
@@ -156,6 +157,7 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 	if !hasInput {
 		inj = nil
 	}
+	log.Printf("[desktop] builtin 会话开始 injector=%v", inj != nil)
 
 	// 剪贴板同步：2s 轮询系统剪贴板，变化推给浏览器（文本帧 {"type":"clip","data":...}）
 	board, _ := clipboard.Open()
@@ -217,6 +219,10 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		switch ev.Type {
 		case "mouse_move":
 			inj.MouseMove(ev.X, ev.Y)
+			if time.Since(lastMoveLog) > 2*time.Second {
+				lastMoveLog = time.Now()
+				log.Printf("[desktop] input move x=%d y=%d", ev.X, ev.Y)
+			}
 		case "mouse_button":
 			log.Printf("[desktop] input button=%d down=%v", ev.Button, ev.Down)
 			inj.MouseButton(ev.Button, ev.Down)
