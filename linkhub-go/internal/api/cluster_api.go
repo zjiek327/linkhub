@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"linkhub/internal/auth"
 	"linkhub/internal/cluster"
 	"linkhub/internal/connector"
 	"linkhub/internal/models"
@@ -24,12 +25,13 @@ type ClusterHandler struct {
 	enabled bool
 	name    string
 	address string
+	authMw  *auth.Middleware // 有值时对外 clip 文件路由走登录鉴权（internal 路由仍用集群令牌）
 	// localRoutes 根路由器引用（forwardLocal 复用本节点内部路由执行被转发的调用）
 	localRoutes chi.Router
 }
 
-func NewClusterHandler(c *cluster.Cluster, st *store.Store, mgr *session.Manager, enabled bool, name, address string) *ClusterHandler {
-	return &ClusterHandler{cluster: c, store: st, manager: mgr, enabled: enabled, name: name, address: address}
+func NewClusterHandler(c *cluster.Cluster, st *store.Store, mgr *session.Manager, enabled bool, name, address string, authMw *auth.Middleware) *ClusterHandler {
+	return &ClusterHandler{cluster: c, store: st, manager: mgr, enabled: enabled, name: name, address: address, authMw: authMw}
 }
 
 func (h *ClusterHandler) RegisterRoutes(r chi.Router) {
@@ -58,6 +60,16 @@ func (h *ClusterHandler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/cluster/internal/devices/from-template/{key}", h.internalFromTemplate)
 	r.Delete("/api/cluster/internal/devices/{device_id}", h.internalDeleteDevice)
 	r.Get("/api/cluster/internal/connector-kinds", h.internalConnectorKinds)
+	// 剪贴板文件：internal 走集群令牌（上方），对外两条需登录（cluster 其余 proxy 历史遗留公开，另行治理）
+	if h.authMw != nil {
+		r.Group(func(ar chi.Router) {
+			ar.Use(h.authMw.User)
+			ar.Get("/api/cluster/clip-limit", h.clipLimit)
+			ar.With(h.authMw.RequireRole(auth.RoleOperator, auth.RoleAdmin)).
+				Post("/api/cluster/proxy/{node_id}/clipboard-file", h.clipFileProxy)
+		})
+	}
+	r.Post("/api/cluster/internal/clipboard-file", h.internalClipFile)
 	r.Post("/api/cluster/internal/forward", h.internalForward)
 }
 

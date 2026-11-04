@@ -29,7 +29,10 @@ var (
 	pGlobalFree   = kernel32.NewProc("GlobalFree")
 )
 
-const cfUnicodeText = 13
+const (
+	cfUnicodeText = 13
+	cfHDROP       = 15 // 文件列表：DROPFILES 结构，资源管理器 Ctrl+V 粘贴出文件
+)
 
 type winBoard struct{ mu sync.Mutex }
 
@@ -116,6 +119,44 @@ func (b *winBoard) Set(text string) bool {
 		return false
 	}
 	return true // 成功：h 所有权移交剪贴板，禁止再释放
+}
+
+// SetFile 把文件引用写入剪贴板（CF_HDROP）：DROPFILES 头 + UTF-16 双 NUL 结尾路径表。
+// 资源管理器/大多数应用 Ctrl+V 直接粘贴出文件本体
+func (b *winBoard) SetFile(absPath string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	u16 := utf16.Encode([]rune(absPath))
+	// DROPFILES：pFiles(4)=结构大小20，pt(8) 忽略，fNC(4)=0，fWide(4)=1；随后路径表（每项 NUL 结尾，表末再一个 NUL）
+	size := uintptr(20 + (len(u16)+1)*2 + 2)
+	h, _, _ := pGlobalAlloc.Call(0x0042, size) // GMEM_MOVEABLE|GMEM_ZEROINIT
+	if h == 0 {
+		return false
+	}
+	ptr, _, _ := pGlobalLock.Call(h)
+	if ptr == 0 {
+		pGlobalFree.Call(h)
+		return false
+	}
+	p := *(*unsafe.Pointer)(unsafe.Pointer(&ptr))
+	*(*uint32)(unsafe.Add(p, 0)) = 20  // pFiles
+	*(*uint32)(unsafe.Add(p, 16)) = 1  // fWide = true
+	dst := unsafe.Slice((*uint16)(unsafe.Add(p, 20)), len(u16)+2)
+	copy(dst, u16)
+	dst[len(u16)], dst[len(u16)+1] = 0, 0
+	pGlobalUnlock.Call(h)
+
+	if !openClipboard() {
+		pGlobalFree.Call(h)
+		return false
+	}
+	defer pCloseClipboard.Call()
+	pEmptyClipboard.Call()
+	if r, _, _ := pSetClipboardData.Call(cfHDROP, h); r == 0 {
+		pGlobalFree.Call(h)
+		return false
+	}
+	return true
 }
 
 func (b *winBoard) Close() {}

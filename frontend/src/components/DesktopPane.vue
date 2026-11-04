@@ -72,6 +72,21 @@
           <el-button size="small" type="primary" :disabled="!clipText || phase !== 'online'" @click="sendClipText">发送到远程</el-button>
         </div>
       </div>
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:#888;margin-bottom:4px">文件 → 远程：选文件发送（上限 {{ clipFileLimitMB }} MB），到远程窗口 Ctrl+V 粘贴出文件</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input ref="clipFileEl" type="file" style="font-size:12px;flex:1;min-width:0" @change="onClipFilePick" />
+          <el-button size="small" type="primary" :disabled="!clipFile || clipFileStatus === 'uploading'" @click="sendClipFile">发送文件</el-button>
+        </div>
+        <div v-if="clipFile" style="font-size:12px;margin-top:4px">
+          {{ clipFile.name }}（{{ fmtSize(clipFile.size) }}）
+          <span v-if="clipFile.size > clipFileLimitMB * 1048576" style="color:#f56c6c">超过上限 {{ clipFileLimitMB }} MB</span>
+        </div>
+        <el-progress v-if="clipFileStatus === 'uploading'" :percentage="clipFilePct" style="margin-top:6px" />
+        <div v-if="clipFileStatus === 'uploading' && clipFilePct >= 99" style="font-size:12px;color:#888">已上传，等待远程写入…</div>
+        <div v-if="clipFileStatus === 'done'" style="font-size:12px;color:#67c23a;margin-top:4px">{{ clipFileResult }}</div>
+        <div v-if="clipFileStatus === 'error'" style="font-size:12px;color:#f56c6c;margin-top:4px">{{ clipFileErr }}</div>
+      </div>
       <div>
         <div style="font-size:12px;color:#888;margin-bottom:4px">远程 → 本地：远程复制后内容每 2s 自动出现在这里</div>
         <textarea ref="remoteClipEl" :value="lastRemoteClip" readonly rows="4"
@@ -88,7 +103,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElSwitch, ElTag, ElAlert } from 'element-plus'
+import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElProgress, ElSwitch, ElTag, ElAlert } from 'element-plus'
 import RFB from '@novnc/novnc'
 import { getToken, http, wsUrl } from '../api'
 
@@ -374,6 +389,67 @@ function copyRemoteClip() {
   el.focus()
   el.select()
   try { document.execCommand('copy') } catch { /* 老浏览器兜底也失败则忽略 */ }
+}
+// ---------- 剪贴板文件传输 ----------
+// XHR 上传（非 fetch：fetch 的 upload progress 支持差），同源 POST 到所在节点，
+// 集群内流式转发到目标节点落盘并写入其系统剪贴板（进度=到入口节点；99% 后等最终响应）
+const clipFileEl = ref<HTMLInputElement>()
+const clipFile = ref<File | null>(null)
+const clipFileLimitMB = ref(10)
+const clipFilePct = ref(0)
+const clipFileStatus = ref<'' | 'uploading' | 'done' | 'error'>('')
+const clipFileResult = ref('')
+const clipFileErr = ref('')
+let clipLimitLoaded = false
+
+watch(clipDlg, v => {
+  if (v && !clipLimitLoaded) {
+    clipLimitLoaded = true
+    void http.get('/cluster/clip-limit').then(({ data }: any) => {
+      if (data?.max_mb > 0) clipFileLimitMB.value = data.max_mb
+    }).catch(() => { /* 查询失败用默认 10MB */ })
+  }
+})
+function fmtSize(n: number): string {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB'
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB'
+  return n + ' B'
+}
+function onClipFilePick() {
+  clipFile.value = clipFileEl.value?.files?.[0] ?? null
+  clipFileStatus.value = ''
+  clipFileErr.value = ''
+  clipFilePct.value = 0
+}
+function sendClipFile() {
+  const f = clipFile.value
+  if (!f || clipFileStatus.value === 'uploading') return
+  clipFilePct.value = 0
+  clipFileStatus.value = 'uploading'
+  clipFileErr.value = ''
+  const xhr = new XMLHttpRequest()
+  xhr.open('POST', `/api/cluster/proxy/${encodeURIComponent(props.node || 'local')}/clipboard-file?filename=${encodeURIComponent(f.name)}`)
+  const tok = getToken()
+  if (tok) xhr.setRequestHeader('Authorization', `Bearer ${tok}`)
+  xhr.upload.onprogress = ev => {
+    if (ev.lengthComputable) clipFilePct.value = Math.min(99, Math.round((ev.loaded / ev.total) * 100))
+  }
+  xhr.onload = () => {
+    let m: any = null
+    try { m = JSON.parse(xhr.responseText) } catch { /* 非 JSON 响应 */ }
+    if (xhr.status >= 200 && xhr.status < 300 && m?.ok) {
+      clipFilePct.value = 100
+      clipFileStatus.value = 'done'
+      clipFileResult.value = m.clip
+        ? '已发送，到远程窗口 Ctrl+V 粘贴出文件'
+        : `已发送到远程：${m.path}（剪贴板引用写入失败，请按路径取文件）`
+    } else {
+      clipFileStatus.value = 'error'
+      clipFileErr.value = m?.error || `HTTP ${xhr.status}`
+    }
+  }
+  xhr.onerror = () => { clipFileStatus.value = 'error'; clipFileErr.value = '网络错误' }
+  xhr.send(f)
 }
 function toggleFullscreen() { (canvasWrap.value ?? screenEl.value)?.requestFullscreen?.() }
 function disconnect() {

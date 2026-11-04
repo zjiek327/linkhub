@@ -147,13 +147,56 @@ func (b *x11Board) Set(text string) bool {
 		return false
 	}
 	// 服务取剪贴板请求；60s 后关闭连接自动放弃属主（SelectionClear 同理）
-	go serveSelection(conn, win, text, targets, utf8)
+	go serveSelection(conn, win, text, targets, utf8, 0, 0)
 	return true
 }
 
-// serveSelection 响应 SelectionRequest（TARGETS 协商 + UTF8_STRING/STRING 数据），
+// SetFile 把文件引用写入剪贴板：成为 CLIPBOARD 属主，按 text/uri-list 与
+// x-special/gnome-copied-files 应答（GTK/Qt/KDE 文件管理器 Ctrl+V 粘贴出文件）
+func (b *x11Board) SetFile(absPath string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	conn, err := xgb.NewConn()
+	if err != nil {
+		return false
+	}
+	win, err := mkWindow(conn)
+	if err != nil {
+		conn.Close()
+		return false
+	}
+	clip := intern(conn, "CLIPBOARD")
+	targets := intern(conn, "TARGETS")
+	utf8 := intern(conn, "UTF8_STRING")
+	uri := intern(conn, "text/uri-list")
+	gnome := intern(conn, "x-special/gnome-copied-files")
+	if clip == xproto.AtomNone || targets == xproto.AtomNone || utf8 == xproto.AtomNone ||
+		uri == xproto.AtomNone || gnome == xproto.AtomNone {
+		conn.Close()
+		return false
+	}
+	xproto.SetSelectionOwner(conn, win, clip, xproto.TimeCurrentTime)
+	if owner, _ := xproto.GetSelectionOwner(conn, clip).Reply(); owner == nil || owner.Owner != win {
+		conn.Close()
+		return false
+	}
+	// text=文件绝对路径；uri/gnome 非 0 触发文件模式
+	go serveSelection(conn, win, absPath, targets, utf8, uri, gnome)
+	return true
+}
+
+// serveSelection 响应 SelectionRequest：
+//   - 文本模式（uri==0）：TARGETS=[TARGETS,UTF8_STRING] + UTF8_STRING/STRING 数据
+//   - 文件模式（uri!=0）：TARGETS 加 text/uri-list、x-special/gnome-copied-files，
+//     另以 UTF8_STRING 应答纯路径（无 URI 能力的应用粘贴出路径文本）
+//
 // 连接关闭即放弃 selection 属主
-func serveSelection(conn *xgb.Conn, win xproto.Window, text string, targets, utf8 xproto.Atom) {
+func serveSelection(conn *xgb.Conn, win xproto.Window, text string, targets, utf8, uri, gnome xproto.Atom) {
+	uris, gnomeData := "", ""
+	if uri != 0 {
+		uris = "file://" + text + "\n"
+		gnomeData = "copy\nfile://" + text
+	}
 	go func() {
 		time.Sleep(60 * time.Second)
 		conn.Close() // 触发 WaitForEvent 出错退出
@@ -173,12 +216,24 @@ func serveSelection(conn *xgb.Conn, win xproto.Window, text string, targets, utf
 			switch e.Target {
 			case targets:
 				prop = e.Property
-				data := []byte{
-					byte(targets), byte(targets >> 8), byte(targets >> 16), byte(targets >> 24),
-					byte(utf8), byte(utf8 >> 8), byte(utf8 >> 16), byte(utf8 >> 24),
+				atoms := []xproto.Atom{targets, utf8}
+				if uri != 0 {
+					atoms = append(atoms, uri, gnome)
+				}
+				data := make([]byte, 0, len(atoms)*4)
+				for _, a := range atoms {
+					data = append(data, byte(a), byte(a>>8), byte(a>>16), byte(a>>24))
 				}
 				xproto.ChangeProperty(conn, xproto.PropModeReplace, e.Requestor,
-					e.Property, xproto.AtomAtom, 32, 2, data)
+					e.Property, xproto.AtomAtom, 32, uint32(len(atoms)), data)
+			case uri:
+				prop = e.Property
+				xproto.ChangeProperty(conn, xproto.PropModeReplace, e.Requestor,
+					e.Property, uri, 8, uint32(len(uris)), []byte(uris))
+			case gnome:
+				prop = e.Property
+				xproto.ChangeProperty(conn, xproto.PropModeReplace, e.Requestor,
+					e.Property, gnome, 8, uint32(len(gnomeData)), []byte(gnomeData))
 			case utf8, xproto.AtomString:
 				prop = e.Property
 				xproto.ChangeProperty(conn, xproto.PropModeReplace, e.Requestor,

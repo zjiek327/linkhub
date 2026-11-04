@@ -226,7 +226,7 @@ func main() {
 		go cl.ResourceWatchLoop(func(event string, data map[string]interface{}) { bus.Publish(event, data) })
 	}
 
-	ch := api.NewClusterHandler(cl, st, mgr, cfg.ClusterEnabled, cfg.NodeName, cfg.AdvertiseAddr)
+	ch := api.NewClusterHandler(cl, st, mgr, cfg.ClusterEnabled, cfg.NodeName, cfg.AdvertiseAddr, mw)
 	ch.RegisterRoutes(r)
 
 	// 前端静态托管（embed 嵌入二进制，单文件分发）
