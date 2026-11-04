@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"log"
@@ -73,6 +74,7 @@ func (st *Stream) OnError(h func(streak int, onAlt bool, err error)) { st.errHoo
 // PerfSample 采集管线分段耗时采样（每 perfEvery 帧平均一次，诊断延迟用）
 type PerfSample struct {
 	Frames          int
+	Src             string // 采集源类型（*capture.magScreen / *capture.gdiScreen）
 	AvgCapture      time.Duration // Frame() 抓屏
 	AvgDiff         time.Duration // 差分扫描
 	AvgEncode       time.Duration // 并行 JPEG 编码
@@ -124,7 +126,7 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 			return
 		}
 		n := time.Duration(pFrames)
-		st.perfSink(PerfSample{Frames: pFrames,
+		st.perfSink(PerfSample{Frames: pFrames, Src: fmt.Sprintf("%T", st.scr),
 			AvgCapture: pCapture / n, AvgDiff: pDiff / n, AvgEncode: pEncode / n, AvgSerialize: pSerialize / n,
 			AvgDirty: pDirty / pFrames, AvgPayloadBytes: pSize / pFrames})
 		pCapture, pDiff, pEncode, pSerialize, pDirty, pSize, pFrames = 0, 0, 0, 0, 0, 0, 0

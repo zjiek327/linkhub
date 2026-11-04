@@ -95,7 +95,10 @@ func (h *DesktopHandler) localDesktop(w http.ResponseWriter, r *http.Request) {
 }
 
 // localBuiltin 内置采集会话：下行 JPEG 脏矩形帧（二进制），上行输入事件（JSON 文本帧）
-var lastMoveLog time.Time // mouse_move 限频日志（诊断输入链路用）
+var (
+	lastMoveLog     time.Time // mouse_move 限频日志（诊断输入链路用）
+	lastUpstreamLog time.Time // 上行消息类型限频日志（诊断上行断流用）
+)
 func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 	scr, ok := capture.Open()
 	if !ok {
@@ -140,7 +143,8 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		if perfWFrames > 0 {
 			avgW = perfWTime / time.Duration(perfWFrames)
 		}
-		log.Printf("[perf] cap=%.1f diff=%.1f enc=%.1f ser=%.1f write=%.1f ms | dirty=%d payload=%.0fKB frames=%d",
+		log.Printf("[perf] src=%s cap=%.1f diff=%.1f enc=%.1f ser=%.1f write=%.1f ms | dirty=%d payload=%.0fKB frames=%d",
+			s.Src,
 			s.AvgCapture.Seconds()*1000, s.AvgDiff.Seconds()*1000, s.AvgEncode.Seconds()*1000,
 			s.AvgSerialize.Seconds()*1000, avgW.Seconds()*1000, s.AvgDirty, float64(s.AvgPayloadBytes)/1024, s.Frames)
 		perfWFrames, perfWTime = 0, 0
@@ -173,7 +177,7 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 	if !hasInput {
 		inj = nil
 	}
-	log.Printf("[desktop] builtin 会话开始 injector=%v", inj != nil)
+	log.Printf("[desktop] builtin 会话开始 injector=%v from=%s", inj != nil, r.RemoteAddr)
 
 	// 剪贴板同步：2s 轮询系统剪贴板，变化推给浏览器（文本帧 {"type":"clip","data":...}）
 	board, _ := clipboard.Open()
@@ -225,6 +229,11 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.Unmarshal(data, &ev); err != nil {
 			continue
+		}
+		// 上行消息显形：1s 限频打类型（定位上行断流的决定性证据）
+		if time.Since(lastUpstreamLog) > time.Second {
+			lastUpstreamLog = time.Now()
+			log.Printf("[desktop] upstream type=%s len=%d", ev.Type, len(data))
 		}
 		if ev.Type == "clip_set" {
 			// 浏览器 → 远端系统剪贴板（无输入注入器的只读会话也可用）
