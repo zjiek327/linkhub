@@ -109,7 +109,7 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 	defer c.Close(websocket.StatusNormalClosure, "")
 	c.SetReadLimit(1 << 20) // 上行含 clip_set 剪贴板文本帧（≤256KB），防默认 32KB 断流
 
-	stream := capture.NewStream(scr, 12)
+	stream := capture.NewStream(scr, 0) // fps 默认 24，LINKHUB_DESKTOP_FPS 可覆盖
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

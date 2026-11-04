@@ -90,7 +90,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElForm, ElFormItem, ElInput, ElSwitch, ElTag, ElAlert } from 'element-plus'
 import RFB from '@novnc/novnc'
-import { wsUrl } from '../api'
+import { getToken, http, wsUrl } from '../api'
 
 const props = withDefaults(defineProps<{ node?: string; nodeName?: string; mode?: 'builtin' | 'vnc' }>(),
   { node: '', nodeName: '', mode: 'builtin' })
@@ -131,18 +131,66 @@ const phaseText = computed(() => ({
 
 // ---------- 内置采集模式 ----------
 const noticeMsg = ref('') // 后端推送的采集异常通知（锁屏安全桌面等）
-function startBuiltin() {
+let directFailed = false // 直连失败后回落中继（每次挂载只试一次，防抖动）
+
+async function startBuiltin() {
   if (!canvasEl.value || ws) return
   lastRemoteClip = ''
   noticeMsg.value = ''
   ctx2d = canvasEl.value.getContext('2d')
-  ws = new WebSocket(wsUrl(`/ws/desktop?node=${props.node}`))
-  ws.binaryType = 'arraybuffer'
-  ws.onopen = () => { phase.value = 'online'; canvasEl.value?.focus() }
-  ws.onclose = () => { releaseMods(); phase.value = 'closed' }
-  ws.onmessage = ev => {
+  phase.value = 'connecting'
+  // 直连优先：浏览器能直达目标节点则跳过中继（省一跳转发延迟与中转 CPU）。
+  // WS 不受跨域限制，JWT 走 query 参数各节点通用；直连 2.5s 未通则回落中继
+  let url = wsUrl(`/ws/desktop?node=${props.node}`)
+  let isDirect = false
+  if (!directFailed) {
+    const direct = await resolveDirectUrl()
+    if (direct) { url = direct; isDirect = true }
+  }
+  openBuiltinWS(url, isDirect)
+}
+
+// 从集群节点表解析目标节点地址构造直连 URL；本机/无地址/查询失败返回 null
+async function resolveDirectUrl(): Promise<string | null> {
+  try {
+    const { data } = await http.get('/cluster/nodes')
+    const list = Array.isArray(data) ? data : []
+    const n = list.find((x: any) => x.node_id === props.node)
+    if (!n || n.is_self || !n.address) return null
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    const tok = getToken()
+    return `${proto}://${n.address}/ws/desktop?node=${encodeURIComponent(props.node)}${tok ? `&token=${tok}` : ''}`
+  } catch { return null }
+}
+
+function openBuiltinWS(url: string, isDirect: boolean) {
+  const sock = new WebSocket(url)
+  ws = sock
+  sock.binaryType = 'arraybuffer'
+  // 直连探测超时：2.5s 未 open 即关闭走 onclose 回落
+  const openTimer = window.setTimeout(() => {
+    if (sock.readyState !== WebSocket.OPEN) sock.close()
+  }, 2500)
+  sock.onopen = () => {
+    window.clearTimeout(openTimer)
+    phase.value = 'online'
+    canvasEl.value?.focus()
+  }
+  sock.onclose = () => {
+    window.clearTimeout(openTimer)
+    releaseMods()
+    if (isDirect && !directFailed) {
+      directFailed = true
+      ws = null
+      void startBuiltin() // 回落中继，仅一次
+      return
+    }
+    ws = null
+    phase.value = 'closed'
+  }
+  sock.onmessage = ev => {
     if (typeof ev.data === 'string') {
-      // 剪贴板推送：{"type":"clip","data":"..."}
+      // 剪贴板推送：{"type":"clip","data":"..."}；采集异常：{"type":"notice","data":"..."}
       try {
         const m = JSON.parse(ev.data)
         if (m.type === 'clip' && typeof m.data === 'string') {
