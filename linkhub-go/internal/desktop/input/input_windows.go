@@ -14,12 +14,18 @@ import (
 var lastInputErrLog time.Time
 
 // logInputErr 注入失败的限频日志：SetCursorPos/SendInput 失败是静默返回 0，
-// 不主动检查就永远丢失——鼠标失控定位的最后一段（Windows 错误码直出）
+// 不主动检查就永远丢失——鼠标失控定位的最后一段（Windows 错误码直出）。
+// 失败但错误码为空（ERROR_SUCCESS）是锁屏/安全桌面的典型特征：API 返回 FALSE
+// 却不设错误码——直接点明，免得 "The operation completed successfully" 误导排查
 func logInputErr(what string, err error) {
 	if time.Since(lastInputErrLog) < 2*time.Second {
 		return
 	}
 	lastInputErrLog = time.Now()
+	if err == nil || err == windows.ERROR_SUCCESS {
+		log.Printf("[input] %s 失败: 无错误码（典型：锁屏安全桌面拦截输入，需 SYSTEM 运行）", what)
+		return
+	}
 	log.Printf("[input] %s 失败: %v", what, err)
 }
 
