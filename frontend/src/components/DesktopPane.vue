@@ -217,12 +217,33 @@ function openBuiltinWS(url: string, isDirect: boolean) {
       } catch { /* 非 JSON 文本帧忽略 */ }
       return
     }
-    void handleFrame(new Uint8Array(ev.data))
+    queueFrame(new Uint8Array(ev.data))
   }
 }
 
+// 帧渲染管线：WS 到达快于解码时只保留最新一帧（远程桌面要的是"最新画面"而非
+// "每一帧"），延迟恒等于一帧、不随运动累积；帧内所有块并行解码
+// （createImageBitmap 原生离屏多线程），绘制严格按块序——消除多帧交错渲染的
+// 顺序错乱。12fps 时积压不明显，24fps 下旧实现积压数秒且鼠标反馈看起来"死掉"
+let framePending: Uint8Array | null = null
+let framePumping = false
+
+function queueFrame(f: Uint8Array) {
+  framePending = f // 覆盖未渲染的旧帧
+  if (framePumping) return
+  framePumping = true
+  void (async () => {
+    while (framePending) {
+      const cur = framePending
+      framePending = null
+      await renderFrame(cur)
+    }
+    framePumping = false
+  })()
+}
+
 // 帧格式：[1][2B w][2B h][2B n] + 每块 [2B x][2B y][2B bw][2B bh][4B len][jpeg]（小端，与后端 put16/put32 一致）
-async function handleFrame(f: Uint8Array) {
+async function renderFrame(f: Uint8Array) {
   if (f[0] !== 1 || !ctx2d || !canvasEl.value) return
   const dv = new DataView(f.buffer, f.byteOffset, f.byteLength)
   const w = dv.getUint16(1, true), h = dv.getUint16(3, true), n = dv.getUint16(5, true)
@@ -234,17 +255,22 @@ async function handleFrame(f: Uint8Array) {
     ctx2d!.fillRect(0, 0, w, h)
   }
   let off = 7
+  const metas: { x: number; y: number }[] = []
+  const decodes: Promise<ImageBitmap | null>[] = []
   for (let i = 0; i < n; i++) {
     const x = dv.getUint16(off, true), y = dv.getUint16(off + 2, true)
-    const bw = dv.getUint16(off + 4, true), bh = dv.getUint16(off + 6, true)
     const len = dv.getUint32(off + 8, true)
     off += 12
-    try {
-      const bm = await createImageBitmap(new Blob([f.slice(off, off + len)], { type: 'image/jpeg' }))
-      ctx2d.drawImage(bm, x, y)
-      bm.close()
-    } catch { /* 解码失败丢块 */ }
+    metas.push({ x, y })
+    decodes.push(createImageBitmap(new Blob([f.slice(off, off + len)], { type: 'image/jpeg' })).catch(() => null))
     off += len
+  }
+  const bitmaps = await Promise.all(decodes)
+  for (let i = 0; i < bitmaps.length; i++) {
+    const bm = bitmaps[i]
+    if (!bm || !ctx2d) continue
+    ctx2d.drawImage(bm, metas[i].x, metas[i].y)
+    bm.close()
   }
 }
 
