@@ -56,8 +56,10 @@ type Stream struct {
 	scr     Screen
 	primary Screen // 切换前的首选源（备用源工作期间保留，用于恢复探测）
 	alt     Screen // 当前备用源（nil=未切换）
-	last    []byte // 上一帧 BGRA
-	buf     []byte // 抓帧缓冲
+	last    []byte // 上一帧 BGRA（与 sbuf 同尺寸=可能已降采样）
+	buf     []byte // 抓帧缓冲（全分辨率）
+	sbuf    []byte // 降采样输出缓冲（step=1 时未用）
+	step    int    // 降采样步长（1=全分辨率，2=1/2，3=1/3，4=1/4）
 	fps     int
 	closed  bool
 	stopCh  chan struct{}
@@ -87,6 +89,9 @@ type PerfSample struct {
 func (st *Stream) OnPerf(h func(PerfSample)) { st.perfSink = h }
 
 // NewStream 创建采集流（fps<=0 用默认 24，可用 LINKHUB_DESKTOP_FPS 覆盖，上限 60）
+// LINKHUB_DESKTOP_SCALE 降分辨率采集：0.5/0.33/0.25 或 2/3/4（=步长），
+// 像素量降为 1/n²——抓屏/差分/编码/字节全链降耗，2K/4K 屏下 cap 可砍半以上；
+// 浏览器 CSS 拉伸显示，输入坐标由上层按 Scale() 放大回全分辨率
 func NewStream(scr Screen, fps int) *Stream {
 	if fps <= 0 {
 		fps = 24
@@ -99,12 +104,34 @@ func NewStream(scr Screen, fps int) *Stream {
 	if fps > 60 {
 		fps = 60
 	}
+	step := 1
+	if v := os.Getenv("LINKHUB_DESKTOP_SCALE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			if f < 1 {
+				step = int(1/f + 0.5) // 0.5→2、0.33→3、0.25→4
+			} else {
+				step = int(f + 0.5) // 2→1/2、4→1/4
+			}
+			if step < 1 {
+				step = 1
+			}
+			if step > 4 {
+				step = 4
+			}
+		}
+	}
+	if step > 1 {
+		log.Printf("[capture] 降分辨率采集: 1/%d（LINKHUB_DESKTOP_SCALE=%s）", step, os.Getenv("LINKHUB_DESKTOP_SCALE"))
+	}
 	sz := scr.Size()
-	st := &Stream{scr: scr, fps: fps,
+	st := &Stream{scr: scr, fps: fps, step: step,
 		last: make([]byte, sz.X*sz.Y*4), buf: make([]byte, sz.X*sz.Y*4),
 		stopCh: make(chan struct{})}
 	return st
 }
+
+// Scale 返回降采样步长（1=全分辨率）。上层注入输入坐标时须乘回步长
+func (st *Stream) Scale() int { return st.step }
 
 // Run 阻塞采集循环；onFrame 收到完整序列化帧（msg=1 帧格式见 capture.go 头注释）
 // 帧错误一律跳过不断流：锁屏/安全桌面/分辨率切换都会让 BitBlt/Mag 瞬时失败，
@@ -126,7 +153,11 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 			return
 		}
 		n := time.Duration(pFrames)
-		st.perfSink(PerfSample{Frames: pFrames, Src: fmt.Sprintf("%T", st.scr),
+		src := fmt.Sprintf("%T", st.scr)
+		if st.step > 1 {
+			src += fmt.Sprintf(" 1/%d", st.step)
+		}
+		st.perfSink(PerfSample{Frames: pFrames, Src: src,
 			AvgCapture: pCapture / n, AvgDiff: pDiff / n, AvgEncode: pEncode / n, AvgSerialize: pSerialize / n,
 			AvgDirty: pDirty / pFrames, AvgPayloadBytes: pSize / pFrames})
 		pCapture, pDiff, pEncode, pSerialize, pDirty, pSize, pFrames = 0, 0, 0, 0, 0, 0, 0
@@ -194,6 +225,16 @@ func (st *Stream) Run(onFrame func([]byte)) error {
 		fw, fh := sz.X, sz.Y
 		if len(frame) < fw*fh*4 {
 			continue // 尺寸变化等异常帧，跳过
+		}
+		if st.step > 1 {
+			// 降采样：cap 计时含缩放（目标是"整帧就绪"耗时）。盒式平均保文字可读性
+			sw, sh := fw/st.step, fh/st.step
+			if cap(st.sbuf) < sw*sh*4 {
+				st.sbuf = make([]byte, sw*sh*4)
+			}
+			downscale(frame, st.sbuf, fw, fh, st.step)
+			frame = st.sbuf[:sw*sh*4]
+			fw, fh = sw, sh
 		}
 		pCapture += time.Since(tc)
 		td := time.Now()
@@ -294,6 +335,32 @@ func put32(b []byte, v int) {
 	b[1] = byte(v >> 8)
 	b[2] = byte(v >> 16)
 	b[3] = byte(v >> 24)
+}
+
+// downscale n×n 盒式平均降采样（src 全分辨率 BGRA → dst sw×sh）。边缘余数像素丢弃
+func downscale(src, dst []byte, fw, fh, n int) {
+	sw, sh := fw/n, fh/n
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			var r, g, b, a uint32
+			for dy := 0; dy < n; dy++ {
+				row := src[((y*n+dy)*fw+x*n)*4:]
+				for dx := 0; dx < n; dx++ {
+					p := row[dx*4:]
+					b += uint32(p[0])
+					g += uint32(p[1])
+					r += uint32(p[2])
+					a += uint32(p[3])
+				}
+			}
+			m := uint32(n * n)
+			o := (y*sw + x) * 4
+			dst[o] = byte(b / m)
+			dst[o+1] = byte(g / m)
+			dst[o+2] = byte(r / m)
+			dst[o+3] = byte(a / m)
+		}
+	}
 }
 
 // blockDiffers 比较上一帧与当前帧的指定块（快速路径：4 字节步进抽样）

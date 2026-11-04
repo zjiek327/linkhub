@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"log"
 	"sync"
 	"time"
 	"unsafe"
@@ -88,18 +89,22 @@ type magScreen struct {
 }
 
 // OpenMag 初始化 Magnification 采集；失败返回 false（调用方回退 GDI）
+// 失败原因打日志（诊断：同一台机器有时 Mag、有时 GDI）
 func OpenMag() (Screen, bool) {
 	if r, err := magTry(pMagInitialize); err != nil || r == 0 {
+		log.Printf("[capture] MagInitialize 失败(err=%v r=%d)，回退 GDI", err, r)
 		return nil, false
 	}
 	w, h := sm(0), sm(1)
 	if w <= 0 || h <= 0 {
+		log.Printf("[capture] Mag 初始化失败: 无效屏幕尺寸 %dx%d，回退 GDI", w, h)
 		return nil, false
 	}
 	m := &magScreen{w: w, h: h, reqCh: make(chan chan error), done: make(chan struct{})}
 	initErr := make(chan error, 1)
 	go m.windowThread(w, h, initErr)
 	if err := <-initErr; err != nil {
+		log.Printf("[capture] Mag 初始化失败: %v，回退 GDI", err)
 		pMagUninitialize.Call()
 		return nil, false
 	}

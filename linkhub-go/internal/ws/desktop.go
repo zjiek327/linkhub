@@ -253,10 +253,17 @@ func (h *DesktopHandler) localBuiltin(w http.ResponseWriter, r *http.Request) {
 		}
 		switch ev.Type {
 		case "mouse_move":
-			inj.MouseMove(ev.X, ev.Y)
+			// 降分辨率采集（LINKHUB_DESKTOP_SCALE）时前端坐标是缩放空间，乘回步长到全分辨率
+			x, y := ev.X, ev.Y
+			if stream != nil {
+				if s := stream.Scale(); s > 1 {
+					x, y = x*s, y*s
+				}
+			}
+			inj.MouseMove(x, y)
 			if time.Since(lastMoveLog) > 2*time.Second {
 				lastMoveLog = time.Now()
-				log.Printf("[desktop] input move x=%d y=%d", ev.X, ev.Y)
+				log.Printf("[desktop] input move x=%d y=%d", x, y)
 			}
 		case "mouse_button":
 			log.Printf("[desktop] input button=%d down=%v", ev.Button, ev.Down)
