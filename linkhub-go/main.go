@@ -235,12 +235,12 @@ func main() {
 	r.NotFound(api.FrontendHandler().ServeHTTP)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
-	log.Printf("🐙 灵枢 LinkHub 启动 http://0.0.0.0:%d", cfg.Port)
 	log.Printf("数据目录: %s", cfg.DataDir)
 	if cfg.ClusterEnabled {
 		log.Printf("集群模式: %s @ %s", cfg.NodeName, cfg.AdvertiseAddr)
 	}
-	log.Fatal(http.ListenAndServe(addr, r))
+	// serveHTTP 绑定成功才打启动横幅（独占端口失败时不再误报"已启动"）
+	log.Fatal(serveHTTP(addr, r))
 }
 
 func syncTemplates(st *store.Store) error {

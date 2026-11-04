@@ -191,11 +191,14 @@ func (h *Handler) sftpExecLocal(w http.ResponseWriter, r *http.Request, sid int6
 			Name  string    `json:"name"`
 			IsDir bool      `json:"is_dir"`
 			Size  int64     `json:"size"`
+			Perm  string    `json:"perm"`
+			Owner string    `json:"owner"`
 			Mtime time.Time `json:"mtime"`
 		}
 		out := []Entry{}
 		for _, e := range entries {
-			out = append(out, Entry{Name: e.Name(), IsDir: e.IsDir(), Size: e.Size(), Mtime: e.ModTime()})
+			out = append(out, Entry{Name: e.Name(), IsDir: e.IsDir(), Size: e.Size(),
+				Perm: e.Mode().String(), Owner: fileOwner(e.Sys()), Mtime: e.ModTime()})
 		}
 		sort.Slice(out, func(i, j int) bool {
 			if out[i].IsDir != out[j].IsDir {
