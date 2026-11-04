@@ -4,10 +4,24 @@
 package input
 
 import (
+	"log"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+var lastInputErrLog time.Time
+
+// logInputErr 注入失败的限频日志：SetCursorPos/SendInput 失败是静默返回 0，
+// 不主动检查就永远丢失——鼠标失控定位的最后一段（Windows 错误码直出）
+func logInputErr(what string, err error) {
+	if time.Since(lastInputErrLog) < 2*time.Second {
+		return
+	}
+	lastInputErrLog = time.Now()
+	log.Printf("[input] %s 失败: %v", what, err)
+}
 
 var (
 	user32            = windows.NewLazySystemDLL("user32.dll")
@@ -76,7 +90,10 @@ func (winInput) sendMouse(flags uint32, dx, dy int32, data uint32) error {
 	var mi mouseInput
 	mi.Type = inputMouse
 	mi.Mi.Dx, mi.Mi.Dy, mi.Mi.MouseData, mi.Mi.Flags = dx, dy, data, flags
-	pSendInput.Call(1, uintptr(unsafe.Pointer(&mi)), uintptr(sizeofINPUT))
+	n, _, err := pSendInput.Call(1, uintptr(unsafe.Pointer(&mi)), uintptr(sizeofINPUT))
+	if n != 1 {
+		logInputErr("SendInput mouse", err)
+	}
 	return nil
 }
 
@@ -87,13 +104,18 @@ func (winInput) sendKey(vk uint16, down bool) error {
 	if !down {
 		ki.Ki.Flags = keyEventfKeyUp
 	}
-	pSendInput.Call(1, uintptr(unsafe.Pointer(&ki)), uintptr(sizeofINPUT))
+	n, _, err := pSendInput.Call(1, uintptr(unsafe.Pointer(&ki)), uintptr(sizeofINPUT))
+	if n != 1 {
+		logInputErr("SendInput key", err)
+	}
 	return nil
 }
 
 func (w winInput) MouseMove(x, y int) error {
 	// SetCursorPos：直接像素坐标，无 SendInput 绝对坐标的归一化歧义
-	pSetCursorPos.Call(uintptr(x), uintptr(y))
+	if r, _, err := pSetCursorPos.Call(uintptr(x), uintptr(y)); r == 0 {
+		logInputErr("SetCursorPos", err)
+	}
 	return nil
 }
 
