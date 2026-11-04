@@ -18,4 +18,6 @@ set LINKHUB_CLUSTER_SEEDS=10.110.20.149:8000
 rem 远程桌面：半分辨率采集（2K/4K 屏延迟优先）；要全清晰度删掉下一行
 set LINKHUB_DESKTOP_SCALE=0.5
 
-C:\linkhub\linkhub.exe
+rem 日志落盘（SYSTEM 任务无控制台，不重定向则崩溃/报错无处可查）：
+rem 追加写 C:\linkhub\linkhub.log，排查时直接看文件
+C:\linkhub\linkhub.exe >> C:\linkhub\linkhub.log 2>&1
