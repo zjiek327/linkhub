@@ -90,9 +90,12 @@ type magScreen struct {
 
 // OpenMag 初始化 Magnification 采集；失败返回 false（调用方回退 GDI）
 // 失败原因打日志（诊断：同一台机器有时 Mag、有时 GDI）
+// 注意：判定成败只看 r——LazyProc.Call 的 err 是 GetLastError，调用成功时也是
+// 非 nil 的 errno(0)（"The operation completed successfully"），用它判定会把
+// 成功的 MagInitialize 误判为失败（LAPTOP 从未真正用上 Mag、一直跑慢 GDI 的元凶）
 func OpenMag() (Screen, bool) {
-	if r, err := magTry(pMagInitialize); err != nil || r == 0 {
-		log.Printf("[capture] MagInitialize 失败(err=%v r=%d)，回退 GDI", err, r)
+	if r, err := magTry(pMagInitialize); r == 0 {
+		log.Printf("[capture] MagInitialize 失败(%v)，回退 GDI", err)
 		return nil, false
 	}
 	w, h := sm(0), sm(1)
