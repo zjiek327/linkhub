@@ -6,6 +6,9 @@ cd /d %~dp0
 rem ==== 集群 token：必须与 39 服务器一致（不填无法组网）====
 set LINKHUB_CLUSTER_TOKEN=在这里填token
 
+rem ==== 集群对端：必须写 LAPTOP 可达的地址（10.218.146.39 被网段 ACL 拦截，10.110.20.149 通）====
+set LINKHUB_CLUSTER_PEERS=http://10.110.20.149:8000
+
 rem ==== 远程桌面降分辨率采集：0.5=半分辨率（延迟优先，推荐）====
 rem ==== 要全清晰度删除下一行即可 ====
 set LINKHUB_DESKTOP_SCALE=0.5
