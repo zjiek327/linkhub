@@ -4,10 +4,14 @@ title LinkHub
 cd /d %~dp0
 
 rem ==== 前置自检：失败时打印原因并 pause 停住，绝不闪退 ====
-if not exist "%~dp0linkhub.exe" (
-    echo [错误] 当前目录没有 linkhub.exe
-    echo        目录: %~dp0
-    echo        请先 go build，或把本 bat 放到 exe 同目录
+rem exe 定位：bat 同目录优先，其次仓库布局的上级 linkhub-go\（go build 产物所在）
+set "EXE=%~dp0linkhub.exe"
+if not exist "%EXE%" set "EXE=%~dp0..\linkhub-go\linkhub.exe"
+if not exist "%EXE%" (
+    echo [错误] 找不到 linkhub.exe，已查找：
+    echo        %~dp0linkhub.exe
+    echo        %~dp0..\linkhub-go\linkhub.exe
+    echo        请先在 linkhub-go 目录执行 go build
     pause
     exit /b 1
 )
@@ -38,7 +42,7 @@ rem ==== 运行：日志写入与本 bat 同目录的 start.log ====
 echo 日志文件: %~dp0start.log
 echo 实时查看可另开窗口执行: powershell Get-Content "%~dp0start.log" -Wait
 echo.
-linkhub.exe >> "%~dp0start.log" 2>&1
+"%EXE%" >> "%~dp0start.log" 2>&1
 echo.
-echo linkhub.exe 已退出（exit code %errorlevel%），日志见 start.log
+echo linkhub.exe 已退出（exit code %errorlevel%），日志见 %~dp0start.log
 pause
