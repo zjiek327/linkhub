@@ -4,14 +4,14 @@ title LinkHub
 cd /d %~dp0
 
 rem ==== 前置自检：失败时打印原因并 pause 停住，绝不闪退 ====
-rem exe 定位：bat 同目录优先，其次仓库布局的上级 linkhub-go\（go build 产物所在）
+rem exe 定位：bat 同目录优先，其次仓库布局的上级 backend\（go build 产物所在）
 set "EXE=%~dp0linkhub.exe"
-if not exist "%EXE%" set "EXE=%~dp0..\linkhub-go\linkhub.exe"
+if not exist "%EXE%" set "EXE=%~dp0..\backend\linkhub.exe"
 if not exist "%EXE%" (
     echo [错误] 找不到 linkhub.exe，已查找：
     echo        %~dp0linkhub.exe
-    echo        %~dp0..\linkhub-go\linkhub.exe
-    echo        请先在 linkhub-go 目录执行 go build
+    echo        %~dp0..\backend\linkhub.exe
+    echo        请先在 backend 目录执行 go build
     pause
     exit /b 1
 )

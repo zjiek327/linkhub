@@ -51,7 +51,7 @@
 
 ```bash
 # 构建（Go 1.22+）
-cd linkhub-go && go build -o linkhub .
+cd backend && go build -o linkhub .
 
 # 运行（默认 :8000，数据目录 ~/.linkhub）
 ./linkhub
@@ -89,7 +89,7 @@ LINKHUB_ADVERTISE_ADDR=http://192.168.1.10:8000 \
 
 ```bash
 # 0. 三台都拉代码并构建（任选一机生成令牌，三机共用）
-git clone https://github.com/zjiek327/linkhub.git && cd linkhub/linkhub-go
+git clone https://github.com/zjiek327/linkhub.git && cd linkhub/backend
 go build -o linkhub .
 TOKEN=$(openssl rand -hex 32)    # 只生成一次，抄到另外两台
 
@@ -119,7 +119,7 @@ curl -X POST http://192.168.1.11:8000/api/cluster/join \
 
 ```bash
 # 后端（Go 1.22+，改完重新 go build 即生效；前端产物 embed 进二进制）
-cd linkhub-go
+cd backend
 go build -o linkhub . && ./linkhub      # http://127.0.0.1:8000
 
 # 前端热更开发（Node 18+，Vite 代理 /api 与 /ws 到 :8000）
@@ -128,7 +128,7 @@ npm install
 npm run dev                             # http://127.0.0.1:5173
 ```
 
-前端改动交付链：`npm run build && rsync -a --delete dist/ ../linkhub-go/internal/api/dist/`
+前端改动交付链：`npm run build && rsync -a --delete dist/ ../backend/internal/api/dist/`
 然后重编后端（embed 产物随二进制分发）。
 
 ### 连接树莓派 4B（验收路径）
@@ -146,7 +146,7 @@ npm run dev                             # http://127.0.0.1:5173
 ## 项目结构
 
 ```
-linkhub-go/        Go 后端（单二进制，前端 embed 分发）
+backend/        Go 后端（单二进制，前端 embed 分发）
   internal/
     api/           REST 路由 + 集群代理 + SFTP + 剪贴板文件传输
     ws/            WebSocket（终端/桌面/VNC 中继）
@@ -165,7 +165,7 @@ docs/              需求与架构设计文档
 ## 测试与检查
 
 ```bash
-cd linkhub-go
+cd backend
 go test ./...            # 单元测试
 go vet ./...             # 静态检查
 GOOS=windows go build ./...   # 全树交叉编译（平台相关代码已按 build tag 拆分）

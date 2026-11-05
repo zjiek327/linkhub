@@ -18,9 +18,9 @@ set LINKHUB_CLUSTER_SEEDS=10.110.20.149:8000
 rem 远程桌面：半分辨率采集（2K/4K 屏延迟优先）；要全清晰度删掉下一行
 set LINKHUB_DESKTOP_SCALE=0.5
 
-rem exe 定位：本脚本同目录优先，其次仓库布局的上级 linkhub-go\
+rem exe 定位：本脚本同目录优先，其次仓库布局的上级 backend\
 set "EXE=%~dp0linkhub.exe"
-if not exist "%EXE%" set "EXE=%~dp0..\linkhub-go\linkhub.exe"
+if not exist "%EXE%" set "EXE=%~dp0..\backend\linkhub.exe"
 
 rem 日志落盘（SYSTEM 任务无控制台，不重定向则崩溃/报错无处可查），与脚本同目录
 "%EXE%" >> "%~dp0linkhub.log" 2>&1
